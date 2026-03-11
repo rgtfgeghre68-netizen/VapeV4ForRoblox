@@ -1,3 +1,4 @@
+--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local run = function(func)
 	func()
 end
@@ -679,7 +680,7 @@ run(function()
 		ClientDamageBlock = require(replicatedStorage['rbxts_include']['node_modules']['@easy-games']['block-engine'].out.shared.remotes).BlockEngineRemotes.Client,
 		CombatConstant = require(replicatedStorage.TS.combat['combat-constant']).CombatConstant,
 		DamageIndicator = Knit.Controllers.DamageIndicatorController.spawnDamageIndicator,
-		DefaultKillEffect = require(lplr.PlayerScripts.TS.controllers.game.locker['kill-effect'].effects['default-kill-effect']),
+		DefaultKillEffect = require(lplr.PlayerScripts.TS.controllers.global.locker['kill-effect'].effects['default-kill-effect']),
 		EmoteType = require(replicatedStorage.TS.locker.emote['emote-type']).EmoteType,
 		GameAnimationUtil = require(replicatedStorage.TS.animation['animation-util']).GameAnimationUtil,
 		getIcon = function(item, showinv)
@@ -2075,6 +2076,17 @@ run(function()
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local AttackRemote = {FireServer = function() end}
+	
+	-- NEW: Enhanced Range Visualizer Variables
+	local RangeVisualizer
+	local RangeVisualizerColor
+	local RangeVisualizerTransparency
+	local RangeVisualizerStyle
+	local RangeVisualizerPulse
+	local RangeCircle
+	local RangeParts = {}
+	local VisualizerConnection
+	
 	task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
 	end)
@@ -2103,10 +2115,165 @@ run(function()
 		return sword, meta
 	end
 
+	-- ENHANCED: Better Range Visualizer with multiple styles
+	local function createRangeVisualizer()
+		-- Cleanup existing
+		for _, part in RangeParts do
+			part:Destroy()
+		end
+		table.clear(RangeParts)
+		
+		if not RangeVisualizer.Enabled or not entitylib.isAlive then return end
+		
+		local root = entitylib.character.RootPart
+		if not root then return end
+		
+		local range = AttackRange.Value
+		local style = RangeVisualizerStyle.Value
+		local color = Color3.fromHSV(RangeVisualizerColor.Hue, RangeVisualizerColor.Sat, RangeVisualizerColor.Value)
+		local transparency = 1 - RangeVisualizerTransparency.Value
+		
+		if style == 'Circle' then
+			-- Classic circle of dots
+			for i = 1, 32 do
+				local part = Instance.new('Part')
+				part.Anchored = true
+				part.CanCollide = false
+				part.Transparency = transparency
+				part.Color = color
+				part.Material = Enum.Material.Neon
+				part.Size = Vector3.new(0.4, 0.4, 0.4)
+				part.Shape = Enum.PartType.Ball
+				part.Parent = workspace
+				table.insert(RangeParts, part)
+			end
+			
+		elseif style == 'Sphere' then
+			-- Solid sphere
+			local sphere = Instance.new('Part')
+			sphere.Name = 'RangeSphere'
+			sphere.Shape = Enum.PartType.Ball
+			sphere.Size = Vector3.new(range * 2, range * 2, range * 2)
+			sphere.Anchored = true
+			sphere.CanCollide = false
+			sphere.Transparency = transparency + 0.3
+			sphere.Color = color
+			sphere.Material = Enum.Material.ForceField
+			sphere.CastShadow = false
+			sphere.Parent = workspace
+			table.insert(RangeParts, sphere)
+			
+		elseif style == 'Ring' then
+			-- Rotating ring
+			for i = 1, 36 do
+				local part = Instance.new('Part')
+				part.Anchored = true
+				part.CanCollide = false
+				part.Transparency = transparency
+				part.Color = color
+				part.Material = Enum.Material.Neon
+				part.Size = Vector3.new(0.2, 0.2, range / 10)
+				part.Parent = workspace
+				table.insert(RangeParts, part)
+			end
+			
+		elseif style == 'Hexagon' then
+			-- Hexagonal pattern
+			for i = 1, 6 do
+				local angle = (i / 6) * math.pi * 2
+				for j = 1, 5 do
+					local dist = (j / 5) * range
+					local part = Instance.new('Part')
+					part.Anchored = true
+					part.CanCollide = false
+					part.Transparency = transparency
+					part.Color = color
+					part.Material = Enum.Material.Neon
+					part.Size = Vector3.new(0.3, 0.3, 0.3)
+					part.Shape = Enum.PartType.Ball
+					part.Parent = workspace
+					table.insert(RangeParts, {part, angle, dist})
+				end
+			end
+		end
+		
+		-- Pulse effect
+		if RangeVisualizerPulse.Enabled and #RangeParts > 0 then
+			local pulse = tweenService:Create(
+				RangeParts[1], 
+				TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+				{Transparency = transparency + 0.3}
+			)
+			pulse:Play()
+		end
+	end
+
+	local function updateRangeVisualizer()
+		if not RangeVisualizer.Enabled or not entitylib.isAlive then
+			for _, part in RangeParts do
+				if typeof(part) == 'table' then part[1]:Destroy() else part:Destroy() end
+			end
+			table.clear(RangeParts)
+			return
+		end
+
+		local root = entitylib.character.RootPart
+		if not root then return end
+		
+		local range = AttackRange.Value
+		local pos = root.Position - Vector3.new(0, 2.5, 0)
+		local style = RangeVisualizerStyle.Value
+		
+		if style == 'Circle' then
+			for i, part in RangeParts do
+				local angle = (i / #RangeParts) * math.pi * 2
+				local x = math.cos(angle) * range
+				local z = math.sin(angle) * range
+				part.Position = pos + Vector3.new(x, 0, z)
+			end
+			
+		elseif style == 'Sphere' then
+			if RangeParts[1] then
+				RangeParts[1].Position = pos
+				RangeParts[1].Size = Vector3.new(range * 2, range * 2, range * 2)
+			end
+			
+		elseif style == 'Ring' then
+			local time = tick() * 2
+			for i, part in RangeParts do
+				local angle = (i / #RangeParts) * math.pi * 2 + time
+				local x = math.cos(angle) * range
+				local z = math.sin(angle) * range
+				part.CFrame = CFrame.lookAt(pos + Vector3.new(x, 0, z), pos)
+			end
+			
+		elseif style == 'Hexagon' then
+			for _, data in RangeParts do
+				local part, angle, dist = data[1], data[2], data[3]
+				local x = math.cos(angle) * dist
+				local z = math.sin(angle) * dist
+				part.Position = pos + Vector3.new(x, 0, z)
+			end
+		end
+	end
+
+	local function cleanupRangeVisualizer()
+		for _, part in RangeParts do
+			if typeof(part) == 'table' then part[1]:Destroy() else part:Destroy() end
+		end
+		table.clear(RangeParts)
+		if VisualizerConnection then
+			VisualizerConnection:Disconnect()
+			VisualizerConnection = nil
+		end
+	end
+
 	Killaura = vape.Categories.Blatant:CreateModule({
 		Name = 'Killaura',
 		Function = function(callback)
 			if callback then
+				notif('Killaura', 'Enhanced Range Visual Active', 3, 'info')
+				
 				if inputService.TouchEnabled then
 					pcall(function()
 						lplr.PlayerGui.MobileUI['2'].Visible = Limit.Enabled
@@ -2169,8 +2336,29 @@ run(function()
 					end)
 				end
 
+				-- Setup visualizer heartbeat
+				if RangeVisualizer.Enabled then
+					createRangeVisualizer()
+					VisualizerConnection = runService.Heartbeat:Connect(updateRangeVisualizer)
+				end
+
 				local swingCooldown = 0
 				repeat
+					-- Update range visualizer color/transparency if changed
+					if RangeVisualizer.Enabled and #RangeParts > 0 then
+						local color = Color3.fromHSV(RangeVisualizerColor.Hue, RangeVisualizerColor.Sat, RangeVisualizerColor.Value)
+						local transparency = 1 - RangeVisualizerTransparency.Value
+						for _, part in RangeParts do
+							local p = typeof(part) == 'table' and part[1] or part
+							p.Color = color
+							if p.Name ~= 'RangeSphere' then
+								p.Transparency = transparency
+							else
+								p.Transparency = transparency + 0.3
+							end
+						end
+					end
+					
 					local attacked, sword, meta = {}, getAttackData()
 					Attacking = false
 					store.KillauraTarget = nil
@@ -2270,7 +2458,6 @@ run(function()
 						entitylib.character.RootPart.CFrame = CFrame.lookAt(entitylib.character.RootPart.Position, Vector3.new(vec.X, entitylib.character.RootPart.Position.Y + 0.001, vec.Z))
 					end
 
-					--#attacked > 0 and #attacked * 0.02 or
 					task.wait(1 / UpdateRate.Value)
 				until not Killaura.Enabled
 			else
@@ -2281,6 +2468,7 @@ run(function()
 				for _, v in Particles do
 					v.Parent = nil
 				end
+				cleanupRangeVisualizer()
 				if inputService.TouchEnabled then
 					pcall(function()
 						lplr.PlayerGui.MobileUI['2'].Visible = true
@@ -2360,6 +2548,50 @@ run(function()
 	Mouse = Killaura:CreateToggle({Name = 'Require mouse down'})
 	Swing = Killaura:CreateToggle({Name = 'No Swing'})
 	GUI = Killaura:CreateToggle({Name = 'GUI check'})
+	
+	-- ENHANCED: Better Range Visualizer with multiple styles
+	RangeVisualizer = Killaura:CreateToggle({
+		Name = 'Range Visualizer',
+		Default = true,
+		Tooltip = 'Shows visual indicator of attack range'
+	})
+	RangeVisualizerStyle = Killaura:CreateDropdown({
+		Name = 'Visualizer Style',
+		List = {'Circle', 'Sphere', 'Ring', 'Hexagon'},
+		Default = 'Circle',
+		Darker = true,
+		Visible = false,
+		Function = function()
+			if Killaura.Enabled and RangeVisualizer.Enabled then
+				createRangeVisualizer()
+			end
+		end
+	})
+	RangeVisualizerColor = Killaura:CreateColorSlider({
+		Name = 'Visualizer Color',
+		DefaultHue = 0.6,
+		DefaultSat = 0.8,
+		DefaultValue = 1,
+		DefaultOpacity = 0.6,
+		Darker = true,
+		Visible = false
+	})
+	RangeVisualizerTransparency = Killaura:CreateSlider({
+		Name = 'Visualizer Opacity',
+		Min = 0,
+		Max = 1,
+		Default = 0.6,
+		Decimal = 10,
+		Darker = true,
+		Visible = false
+	})
+	RangeVisualizerPulse = Killaura:CreateToggle({
+		Name = 'Pulse Effect',
+		Default = true,
+		Darker = true,
+		Visible = false
+	})
+	
 	Killaura:CreateToggle({
 		Name = 'Show target',
 		Function = function(callback)
@@ -2538,10 +2770,6 @@ run(function()
 		end,
 		Tooltip = 'Only attacks when the sword is held'
 	})
-	--[[LegitAura = Killaura:CreateToggle({
-		Name = 'Swing only',
-		Tooltip = 'Only attacks while swinging manually'
-	})]]
 end)
 	
 run(function()
@@ -3181,6 +3409,8 @@ run(function()
 		Darker = true
 	})
 end)
+
+																																					
 	
 run(function()
 	local BedESP
@@ -8477,17 +8707,227 @@ run(function()
 				end))
 			end
 		end,
-		Tooltip = 'Allows you to select any clientside win effect'
+			Tooltip = 'Allows you to select any clientside win effect'
 	})
 	local WinEffectName = {}
 	for i, v in bedwars.WinEffectMeta do
 		table.insert(WinEffectName, v.name)
 		NameToId[v.name] = i
 	end
-	table.sort(WinEffectName)
-	List = WinEffect:CreateDropdown({
-		Name = 'Effects',
-		List = WinEffectName
+end)  -- THIS END WAS MISSING!
+
+-- Infinite Jump (TP Down-Up Method) - Blatant Module - FIXED
+run(function()
+	local InfiniteJump
+	local EnabledNotification
+	local TPDistance
+	local TPReturnHeight
+	local TPSpeed
+	local VisualFeedback
+	local AutoEnable
+	local JumpBoost
+	
+	local isJumping = false
+	local canJump = true
+	
+	InfiniteJump = vape.Categories.Blatant:CreateModule({
+		Name = 'InfiniteJump',
+		Function = function(callback)
+			if callback then
+				if EnabledNotification.Enabled then
+					notif('InfiniteJump', 'Reaper Config | Made by ItssAbdul | Infinite Jump Active', 5, 'success')
+				end
+				
+				local function performJump()
+					if not canJump or not entitylib.isAlive then return end
+					if isJumping then return end
+					
+					canJump = false
+					isJumping = true
+					
+					local root = entitylib.character.RootPart
+					local humanoid = entitylib.character.Humanoid
+					local startPos = root.Position
+					
+					-- Check if on ground or already jumping
+					if humanoid.FloorMaterial == Enum.Material.Air and root.Velocity.Y > 0 then
+						isJumping = false
+						canJump = true
+						return
+					end
+					
+					-- Visual feedback - start
+					if VisualFeedback.Enabled then
+						local effect = Instance.new('Part')
+						effect.Size = Vector3.new(1.5, 0.1, 1.5)
+						effect.Anchored = true
+						effect.CanCollide = false
+						effect.Transparency = 0.4
+						effect.Color = Color3.fromRGB(0, 255, 255)
+						effect.Material = Enum.Material.Neon
+						effect.CFrame = CFrame.new(startPos - Vector3.new(0, 3, 0))
+						effect.Parent = workspace
+						game:GetService('Debris'):AddItem(effect, 0.15)
+					end
+					
+					-- INSTANT TP DOWN (no wait)
+					local downPos = startPos - Vector3.new(0, TPDistance.Value, 0)
+					root.CFrame = CFrame.new(downPos)
+					
+					-- Tiny delay for server to register
+					task.wait(TPSpeed.Value)
+					
+					-- INSTANT TP UP
+					if entitylib.isAlive and InfiniteJump.Enabled then
+						local returnPos = startPos + Vector3.new(0, TPReturnHeight.Value, 0)
+						root.CFrame = CFrame.new(returnPos)
+						
+						-- Velocity boost for jump feel
+						if JumpBoost.Enabled then
+							root.Velocity = Vector3.new(root.Velocity.X * 0.5, 40, root.Velocity.Z * 0.5)
+						end
+						
+						-- Visual feedback - return
+						if VisualFeedback.Enabled then
+							local effect = Instance.new('Part')
+							effect.Size = Vector3.new(1, 1, 1)
+							effect.Anchored = true
+							effect.CanCollide = false
+							effect.Transparency = 0.3
+							effect.Color = Color3.fromRGB(0, 255, 100)
+							effect.Material = Enum.Material.Neon
+							effect.Shape = Enum.PartType.Ball
+							effect.Position = returnPos
+							effect.Parent = workspace
+							game:GetService('Debris'):AddItem(effect, 0.1)
+						end
+					end
+					
+					-- Cooldown before next jump
+					task.wait(0.15)
+					isJumping = false
+					canJump = true
+				end
+				
+				-- Clean jump detection - only triggers on actual jump input
+				local function onJumpRequest()
+					if not InfiniteJump.Enabled then return end
+					performJump()
+				end
+				
+				-- Bind to jump request
+				InfiniteJump:Clean(inputService.InputBegan:Connect(function(input, gameProcessed)
+					if gameProcessed then return end
+					if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA then
+						onJumpRequest()
+					end
+				end))
+				
+				-- Alternative: Bind to humanoid jump request
+				if entitylib.isAlive then
+					InfiniteJump:Clean(entitylib.character.Humanoid.Jumping:Connect(function()
+						if not InfiniteJump.Enabled then return end
+						onJumpRequest()
+					end))
+				end
+				
+				-- Mobile support - cleaner detection
+				if inputService.TouchEnabled then
+					pcall(function()
+						local touchGui = lplr.PlayerGui:FindFirstChild('TouchGui')
+						if touchGui then
+							local touchControl = touchGui:FindFirstChild('TouchControlFrame')
+							if touchControl then
+								local jumpButton = touchControl:FindFirstChild('JumpButton')
+								if jumpButton then
+									InfiniteJump:Clean(jumpButton.Activated:Connect(function()
+										if not InfiniteJump.Enabled then return end
+										onJumpRequest()
+									end))
+								end
+							end
+						end
+					end)
+				end
+				
+				-- Auto-enable on spawn
+				if AutoEnable.Enabled then
+					InfiniteJump:Clean(entitylib.Events.LocalAdded:Connect(function()
+						task.wait(0.3)
+						if EnabledNotification.Enabled then
+							notif('InfiniteJump', 'Reaper Config | Made by ItssAbdul | Auto-enabled', 3, 'info')
+						end
+					end))
+				end
+				
+			else
+				isJumping = false
+				canJump = true
+			end
+		end,
+		Tooltip = 'Reaper Config | Made by ItssAbdul | Smooth infinite jump with TP method'
+	})
+	
+	EnabledNotification = InfiniteJump:CreateToggle({
+		Name = 'Enable Notification',
+		Default = true,
+		Tooltip = 'Shows Reaper Config credits on enable'
+	})
+	
+	TPDistance = InfiniteJump:CreateSlider({
+		Name = 'TP Down Distance',
+		Min = 10,
+		Max = 60,
+		Default = 25,
+		Suffix = function(val)
+			return val == 1 and 'stud' or 'studs'
+		end
+	})
+	
+	TPReturnHeight = InfiniteJump:CreateSlider({
+		Name = 'Return Height',
+		Min = 2,
+		Max = 10,
+		Default = 4,
+		Suffix = function(val)
+			return val == 1 and 'stud' or 'studs'
+		end,
+		Tooltip = 'How high above original position to return'
+	})
+	
+	TPSpeed = InfiniteJump:CreateSlider({
+		Name = 'TP Delay',
+		Min = 0.01,
+		Max = 0.1,
+		Default = 0.03,
+		Decimal = 100,
+		Suffix = 's',
+		Tooltip = 'Delay between down and up TP (lower = faster)'
+	})
+	
+	VisualFeedback = InfiniteJump:CreateToggle({
+		Name = 'Visual Feedback',
+		Default = true,
+		Tooltip = 'Shows cyan/green effects'
+	})
+	
+	JumpBoost = InfiniteJump:CreateToggle({
+		Name = 'Jump Boost',
+		Default = true,
+		Tooltip = 'Adds upward velocity for better jump feel'
+	})
+	
+	AutoEnable = InfiniteJump:CreateToggle({
+		Name = 'Auto Enable',
+		Default = true,
+		Tooltip = 'Auto-enable on respawn'
 	})
 end)
-	
+
+-- ReaperWare Startup Notification
+task.spawn(function()
+	task.wait(2) -- Wait for vape to fully load
+	notif('ReaperWare', 'reaperware made by noaura', 10, 'success')
+	task.wait(0.5)
+	notif('ReaperWare', 'join our discord for update leaks https://discord.gg/w9WydgRR8j', 10, 'info')
+end)
