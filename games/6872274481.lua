@@ -9425,3 +9425,257 @@ run(function()
 		Tooltip = 'Show boxes around players'
 	})
 end)
+run(function()
+    local AntiSuffocate
+    
+    local function isSuffocating()
+        local character = entitylib.character
+        if not character then return false end
+
+        local headPos = character.Head.Position
+        local headBlock = getPlacedBlock(bedwars.BlockController:getBlockPosition(headPos) * 3)
+        
+        local rootPos = character.RootPart.Position
+        local rootBlock = getPlacedBlock(bedwars.BlockController:getBlockPosition(rootPos) * 3)
+        
+        return headBlock or rootBlock
+    end
+
+    local function AntiSuffocation()
+        local character = entitylib.character
+        if not character then return end
+        
+        local positions = {
+            character.Head.Position,
+            character.RootPart.Position,
+            character.RootPart.Position + Vector3.new(0, 1, 0),
+            character.RootPart.Position - Vector3.new(0, 1, 0)
+        }
+        
+        for _, pos in pairs(positions) do
+            local blockPos = bedwars.BlockController:getBlockPosition(pos) * 3
+            local block = getPlacedBlock(blockPos)
+            
+            if block then
+                character.RootPart.CFrame = character.RootPart.CFrame + Vector3.new(0, 3, 0)
+                break
+            end
+        end
+    end
+
+    AntiSuffocate = vape.Categories.Blatant:CreateModule({
+        Name = 'AntiSuffocate',
+        Function = function(callback)
+            if callback then
+                AntiSuffocate:Clean(runService.Heartbeat:Connect(function()
+                    if isSuffocating() then
+                        AntiSuffocation()
+                    end
+                end))
+            end
+        end,
+        Tooltip = 'Automatically teleports you up when suffocating in blocks.'
+    })
+end)
+run(function()
+    local LagbackNotifier
+    
+    LagbackNotifier = vape.Categories.Blatant:CreateModule({
+        Name = 'LagbackNotifier',
+        Function = function(callback)
+            if callback then
+                local lastnetowner = true
+                
+                -- Detect LastTeleported attribute changes
+                LagbackNotifier:Clean(lplr:GetAttributeChangedSignal('LastTeleported'):Connect(function()
+                    vape:CreateNotification('LagbackNotifier', 'Teleport detected', 3, 'alert')
+                end))
+                
+                -- Detect network ownership loss (lagback)
+                LagbackNotifier:Clean(runService.Heartbeat:Connect(function()
+                    local char = lplr.Character
+                    local hrp = char and char:FindFirstChild('HumanoidRootPart')
+
+                    if hrp then
+                        local currentOwner = isnetworkowner(hrp)
+                        if lastnetowner ~= currentOwner then
+                            lastnetowner = currentOwner
+                            if not currentOwner then
+                                vape:CreateNotification('LagbackNotifier', 'Lagback detected (lost network ownership)', 3, 'warning')
+                            end
+                        end
+                    end
+                end))
+            end
+        end,
+        Tooltip = 'Notifies you when lagback or teleport is detected.'
+    })
+end)
+run(function()
+    local TPAbove
+    local TPAboveRange = {Value = 15}
+    local TPAboveHeight = {Value = 8}
+    local TPAboveMode = {Value = "Head"}
+    
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    local Camera = workspace.CurrentCamera
+
+    local function GetClosestPlayer()
+        local closest = nil
+        local maxDist = TPAboveRange.Value
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                local hrp = player.Character.HumanoidRootPart
+                local hum = player.Character:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    local dist = (LocalPlayer.Character.HumanoidRootPart.Position - hrp.Position).Magnitude
+                    if dist < maxDist then
+                        maxDist = dist
+                        closest = player
+                    end
+                end
+            end
+        end
+        return closest
+    end
+
+    TPAbove = vape.Categories.Blatant:CreateModule({
+        Name = "TPAbove",
+        Function = function(callback)
+            if callback then
+                task.spawn(function()
+                    while TPAbove.Enabled do
+                        local Char = LocalPlayer.Character
+                        local Root = Char and Char:FindFirstChild("HumanoidRootPart")
+                        
+                        if Root then
+                            local target = GetClosestPlayer()
+                            if target and target.Character then
+                                local tRoot = target.Character:FindFirstChild("HumanoidRootPart")
+                                local tHead = target.Character:FindFirstChild("Head")
+                                
+                                if tRoot and tHead then
+                                    local targetPos
+                                    if TPAboveMode.Value == "Head" then
+                                        targetPos = tHead.Position + Vector3.new(0, TPAboveHeight.Value, 0)
+                                    else
+                                        targetPos = tRoot.Position + Vector3.new(0, TPAboveHeight.Value, 0)
+                                    end
+                                    
+                                    Root.CFrame = CFrame.new(targetPos, tRoot.Position)
+                                    Camera.CFrame = CFrame.new(Camera.CFrame.Position, tRoot.Position)
+                                end
+                            end
+                        end
+                        task.wait()
+                    end
+                end)
+            end
+        end,
+        Tooltip = "Instantly teleports above closest enemy when in range."
+    })
+
+    TPAboveRange = TPAbove:CreateSlider({
+        Name = "Activation Range",
+        Min = 5, Max = 30, Default = 15,
+        Suffix = " studs",
+        Function = function(val) TPAboveRange.Value = val end
+    })
+
+    TPAboveHeight = TPAbove:CreateSlider({
+        Name = "Teleport Height",
+        Min = 0, Max = 20, Default = 8,
+        Suffix = " studs",
+        Function = function(val) TPAboveHeight.Value = val end
+    })
+    
+    TPAboveMode = TPAbove:CreateDropdown({
+        Name = "Target Point",
+        List = {"Head", "HumanoidRootPart"},
+        Default = "Head",
+        Function = function(val) TPAboveMode.Value = val end
+    })
+end)
+run(function()
+    local Ambience
+    local AmbienceID = {Value = "122785120445164"}
+    
+    local lighting = game:GetService("Lighting")
+    local defaultSky = nil
+    
+    local skyboxIDs = {
+        ["Nebula"] = "122785120445164",
+        ["Space"] = "14939768486",
+        ["Galaxy"] = "14939770899",
+        ["Sunset"] = "14939773192",
+        ["Night"] = "14939775511",
+        ["Custom"] = ""
+    }
+
+    Ambience = vape.Categories.Blatant:CreateModule({
+        Name = "Ambience",
+        Function = function(callback)
+            if callback then
+                -- Save original sky
+                defaultSky = lighting:FindFirstChildOfClass("Sky")
+                if defaultSky then
+                    defaultSky.Name = "DefaultSky_Saved"
+                    defaultSky.Parent = nil
+                end
+                
+                -- Remove existing ambience skies
+                for _, v in pairs(lighting:GetChildren()) do
+                    if v.Name:find("Ambience") then
+                        v:Destroy()
+                    end
+                end
+                
+                -- Create new sky
+                local sky = Instance.new("Sky")
+                sky.Name = "Ambience_Sky"
+                local id = AmbienceID.Value ~= "" and "rbxassetid://" .. AmbienceID.Value or "rbxassetid://122785120445164"
+                sky.SkyboxBk = id
+                sky.SkyboxDn = id
+                sky.SkyboxFt = id
+                sky.SkyboxLf = id
+                sky.SkyboxRt = id
+                sky.SkyboxUp = id
+                sky.Parent = lighting
+                
+            else
+                -- Restore default
+                local sky = lighting:FindFirstChild("Ambience_Sky")
+                if sky then sky:Destroy() end
+                
+                local saved = lighting:FindFirstChild("DefaultSky_Saved")
+                if saved then
+                    saved.Name = "Sky"
+                    saved.Parent = lighting
+                end
+            end
+        end,
+        Tooltip = "Changes the skybox for custom ambience."
+    })
+
+    Ambience:CreateDropdown({
+        Name = "Preset",
+        List = {"Nebula", "Space", "Galaxy", "Sunset", "Night", "Custom"},
+        Default = "Nebula",
+        Function = function(val)
+            if val == "Custom" then
+                -- Keep current custom ID
+            else
+                AmbienceID.Value = skyboxIDs[val]
+            end
+        end
+    })
+
+    Ambience:CreateTextBox({
+        Name = "Custom Skybox ID",
+        Default = "122785120445164",
+        Function = function(val)
+            AmbienceID.Value = val:gsub("rbxassetid://", "")
+        end
+    })
+end)
