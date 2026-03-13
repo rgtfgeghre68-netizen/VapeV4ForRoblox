@@ -1,4 +1,5 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
+--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local run = function(func)
 	func()
 end
@@ -8717,80 +8718,110 @@ run(function()
 end)  -- THIS END WAS MISSING!
 run(function()
 	local InfiniteJump
-	local Mode
 	local Delay
 	local Height
 	local rayCheck = RaycastParams.new()
 	rayCheck.RespectCanCollide = true
-	local tpTick, tpToggle, oldy = tick(), true, nil
-
+	
+	-- State variables
+	local isJumping = false
+	local jumpStartTime = 0
+	local hasTeleported = false
+	local originalY = nil
+	
 	InfiniteJump = vape.Categories.Blatant:CreateModule({
 		Name = 'InfiniteJump',
 		Function = function(callback)
 			if callback then
-				InfiniteJump:Clean(runService.PreSimulation:Connect(function(dt)
-					if entitylib.isAlive and isnetworkowner(entitylib.character.RootPart) then
-						local root = entitylib.character.RootPart
-						local humanoid = entitylib.character.Humanoid
-						
-						-- Check if space is pressed and we're in air
-						if inputService:IsKeyDown(Enum.KeyCode.Space) or inputService:IsKeyDown(Enum.KeyCode.ButtonA) then
-							if humanoid.FloorMaterial == Enum.Material.Air and tpToggle then
-								-- We've been in air, check if we should TP down
-								local airleft = (tick() - entitylib.character.AirTime)
-								
-								if airleft > Delay.Value then
-									if not oldy then
-										rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
-										rayCheck.CollisionGroup = root.CollisionGroup
-										
-										local ray = workspace:Raycast(root.Position, Vector3.new(0, -1000, 0), rayCheck)
-										if ray then
-											tpToggle = false
-											oldy = root.Position.Y
-											tpTick = tick() + 0.11
-											
-											-- TP to ground
-											root.CFrame = CFrame.lookAlong(
-												Vector3.new(root.Position.X, ray.Position.Y + entitylib.character.HipHeight, root.Position.Z),
-												root.CFrame.LookVector
-											)
-											
-											-- Reset velocity for clean jump
-											root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
-										end
-									end
-								end
-							else
-								-- We're on ground or not pressing space
-								tpToggle = true
-								oldy = nil
+				-- Input detection for jump start (ONLY triggers once per keypress)
+				InfiniteJump:Clean(inputService.InputBegan:Connect(function(input, gameProcessed)
+					if gameProcessed then return end
+					
+					-- Check for space or controller jump button
+					if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA then
+						if entitylib.isAlive and not isJumping then
+							local humanoid = entitylib.character.Humanoid
+							-- Only start if we're on ground
+							if humanoid.FloorMaterial ~= Enum.Material.Air then
+								isJumping = true
+								hasTeleported = false
+								jumpStartTime = tick()
 							end
+						end
+					end
+				end))
+				
+				-- Main loop - handles the teleport timing
+				InfiniteJump:Clean(runService.PreSimulation:Connect(function(dt)
+					if not entitylib.isAlive then
+						isJumping = false
+						hasTeleported = false
+						return
+					end
+					
+					local root = entitylib.character.RootPart
+					local humanoid = entitylib.character.Humanoid
+					
+					-- Reset if we landed
+					if humanoid.FloorMaterial ~= Enum.Material.Air then
+						if isJumping then
+							isJumping = false
+							hasTeleported = false
+							originalY = nil
+						end
+						return
+					end
+					
+					-- We're in air and tracking a jump - check if time to teleport
+					if isJumping and not hasTeleported then
+						local airTime = tick() - jumpStartTime
+						
+						-- ONLY teleport once after delay time
+						if airTime >= Delay.Value then
+							hasTeleported = true  -- THIS STOPS IT FROM REPEATING
+							originalY = root.Position.Y
 							
-							-- Handle the jump back up after TP down
-							if oldy then
-								if tpTick < tick() then
-									-- Time to jump back up
-									if Mode.Value == 'Normal' then
-										-- Teleport back up and jump
-										local newpos = Vector3.new(root.Position.X, oldy + Height.Value, root.Position.Z)
-										root.CFrame = CFrame.lookAlong(newpos, root.CFrame.LookVector)
-										root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 50, root.AssemblyLinearVelocity.Z)
-									elseif Mode.Value == 'Velocity' then
-										-- Just apply upward velocity
-										root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, Height.Value * 2, root.AssemblyLinearVelocity.Z)
-									elseif Mode.Value == 'CFrame' then
-										-- Instant CFrame teleport up
-										local newpos = Vector3.new(root.Position.X, oldy + Height.Value, root.Position.Z)
-										root.CFrame = CFrame.lookAlong(newpos, root.CFrame.LookVector)
+							-- Raycast down to find ground
+							rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+							rayCheck.CollisionGroup = root.CollisionGroup
+							
+							local ray = workspace:Raycast(root.Position, Vector3.new(0, -1000, 0), rayCheck)
+							
+							if ray then
+								-- Store current velocity before teleport
+								local currentVel = root.AssemblyLinearVelocity
+								
+								-- Teleport to ground (briefly touch to reset jump state)
+								local groundPos = Vector3.new(
+									root.Position.X, 
+									ray.Position.Y + entitylib.character.HipHeight + 0.1, 
+									root.Position.Z
+								)
+								
+								root.CFrame = CFrame.lookAlong(groundPos, root.CFrame.LookVector)
+								
+								-- Brief pause to register ground contact, then jump back up
+								task.delay(0.03, function()
+									if entitylib.isAlive and InfiniteJump.Enabled then
+										local newRoot = entitylib.character.RootPart
+										
+										-- Teleport to original height + jump boost
+										local jumpPos = Vector3.new(
+											newRoot.Position.X,
+											originalY + Height.Value,
+											newRoot.Position.Z
+										)
+										
+										newRoot.CFrame = CFrame.lookAlong(jumpPos, newRoot.CFrame.LookVector)
+										
+										-- Apply upward velocity for smooth jump arc
+										newRoot.AssemblyLinearVelocity = Vector3.new(
+											currentVel.X * 0.5, 
+											math.max(Height.Value, 30), 
+											currentVel.Z * 0.5
+										)
 									end
-									
-									tpToggle = true
-									oldy = nil
-								else
-									-- Still waiting, freeze Y position
-									root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
-								end
+								end)
 							end
 						end
 					end
@@ -8800,76 +8831,61 @@ run(function()
 				if inputService.TouchEnabled then
 					pcall(function()
 						local jumpButton = lplr.PlayerGui.TouchGui.TouchControlFrame.JumpButton
-						InfiniteJump:Clean(jumpButton:GetPropertyChangedSignal('ImageRectOffset'):Connect(function()
-							-- Mobile jump button pressed
-							if jumpButton.ImageRectOffset.X == 146 and entitylib.isAlive then
-								local root = entitylib.character.RootPart
-								local humanoid = entitylib.character.Humanoid
-								
-								if humanoid.FloorMaterial == Enum.Material.Air and tpToggle then
-									local airleft = (tick() - entitylib.character.AirTime)
-									
-									if airleft > Delay.Value then
-										rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
-										rayCheck.CollisionGroup = root.CollisionGroup
-										
-										local ray = workspace:Raycast(root.Position, Vector3.new(0, -1000, 0), rayCheck)
-										if ray then
-											tpToggle = false
-											oldy = root.Position.Y
-											tpTick = tick() + 0.11
-											
-											root.CFrame = CFrame.lookAlong(
-												Vector3.new(root.Position.X, ray.Position.Y + entitylib.character.HipHeight, root.Position.Z),
-												root.CFrame.LookVector
-											)
-											root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
-										end
+						local lastJumpState = false
+						
+						InfiniteJump:Clean(runService.Heartbeat:Connect(function()
+							local isPressed = jumpButton.ImageRectOffset.X == 146
+							if isPressed and not lastJumpState then
+								-- Jump button just pressed (rising edge only)
+								if entitylib.isAlive and not isJumping then
+									local humanoid = entitylib.character.Humanoid
+									if humanoid.FloorMaterial ~= Enum.Material.Air then
+										isJumping = true
+										hasTeleported = false
+										jumpStartTime = tick()
 									end
 								end
 							end
+							lastJumpState = isPressed
 						end))
 					end)
 				end
+				
 			else
-				tpToggle = true
-				oldy = nil
+				-- Reset all states when disabled
+				isJumping = false
+				hasTeleported = false
+				originalY = nil
+				jumpStartTime = 0
 			end
 		end,
 		ExtraText = function()
 			return 'Heatseeker'
 		end,
-		Tooltip = 'Allows you to jump infinitely by teleporting down then back up.'
-	})
-	
-	Mode = InfiniteJump:CreateDropdown({
-		Name = 'Mode',
-		List = {'Normal', 'Velocity', 'CFrame'},
-		Tooltip = 'Normal - Teleports down then up with jump velocity\nVelocity - Applies upward velocity only\nCFrame - Instant teleport up'
+		Tooltip = 'Jump infinitely - after 2.5s in air, teleports down to reset jump then back up. Only triggers ONCE per jump!'
 	})
 	
 	Delay = InfiniteJump:CreateSlider({
-		Name = 'Air Time Delay',
-		Min = 0,
-		Max = 2,
-		Default = 0.1,
-		Decimal = 100,
+		Name = 'Air Time Before TP',
+		Min = 0.5,
+		Max = 5,
+		Default = 2.5,
+		Decimal = 10,
 		Suffix = 'seconds',
-		Tooltip = 'How long to wait in air before triggering the jump reset'
+		Tooltip = 'How long to wait in air before teleporting down. Default 2.5 seconds.'
 	})
 	
 	Height = InfiniteJump:CreateSlider({
-		Name = 'Jump Height',
+		Name = 'Jump Boost Height',
 		Min = 5,
-		Max = 50,
-		Default = 20,
+		Max = 100,
+		Default = 30,
 		Suffix = function(val)
 			return val == 1 and 'stud' or 'studs'
 		end,
-		Tooltip = 'How high to jump after teleporting down'
+		Tooltip = 'How high to boost after the jump reset. Default 30 studs.'
 	})
 end)
-
 -- ReaperWare Startup Notification
 task.spawn(function()
 	task.wait(2) -- Wait for vape to fully load
