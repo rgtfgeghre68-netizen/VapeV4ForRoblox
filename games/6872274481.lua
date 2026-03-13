@@ -1,5 +1,4 @@
---This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
---This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
+
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local run = function(func)
 	func()
@@ -8752,6 +8751,7 @@ run(function()
 	local AutoBalloons
 	local Visualizer
 	local Keybind
+	local InstantReactivate
 	
 	-- State variables
 	local flying = false
@@ -8767,6 +8767,8 @@ run(function()
 	-- Fake state to mimic legitimate flight sources
 	local fakeBalloonCount = 0
 	local lastBalloonInflate = 0
+	local lastGroundTime = 0
+	local wasOnGround = true
 	
 	local function updateVisualizer(state)
 		if not Visualizer.Enabled then
@@ -8823,6 +8825,16 @@ run(function()
 		return false
 	end
 	
+	local function resetTPState()
+		-- Reset TP state without disabling flight
+		tpToggle = true
+		oldY = nil
+		tpTick = 0
+		lastGroundTime = tick()
+		wasOnGround = true
+		-- Don't set flying = false here - that's the key change
+	end
+	
 	Jetpack = vape.Categories.Blatant:CreateModule({
 		Name = 'Jetpack',
 		Function = function(callback)
@@ -8837,6 +8849,8 @@ run(function()
 				tpTick = 0
 				oldY = nil
 				fakeBalloonCount = 0
+				lastGroundTime = 0
+				wasOnGround = true
 				
 				-- Keybind handling
 				Jetpack:Clean(inputService.InputBegan:Connect(function(input, gameProcessed)
@@ -8847,6 +8861,9 @@ run(function()
 						if not flying and entitylib.isAlive then
 							flying = true
 							notif('Jetpack', 'Activated', 2, 'info')
+						elseif InstantReactivate.Enabled and flying and wasOnGround and tick() - lastGroundTime < 0.5 then
+							-- Already flying but just landed - reactivate boost immediately
+							notif('Jetpack', 'Reactivated', 1, 'info')
 						end
 						up = 1
 					elseif input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.ButtonL2 then
@@ -8858,9 +8875,7 @@ run(function()
 					if input.KeyCode == (Keybind.Value ~= '' and Enum.KeyCode[Keybind.Value] or Enum.KeyCode.Space) or 
 					   input.KeyCode == Enum.KeyCode.ButtonA then
 						up = 0
-						if flying and not (inputService:IsKeyDown(Enum.KeyCode.LeftShift) or inputService:IsKeyDown(Enum.KeyCode.ButtonL2)) then
-							-- Don't immediately stop flying, let momentum carry
-						end
+						-- Don't disable flying on key release - let it continue until manually disabled or TP
 					elseif input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.ButtonL2 then
 						down = 0
 					end
@@ -8874,6 +8889,8 @@ run(function()
 							local isPressed = jumpButton.ImageRectOffset.X == 146
 							if isPressed and not flying and entitylib.isAlive then
 								flying = true
+							elseif isPressed and InstantReactivate.Enabled and flying and wasOnGround and tick() - lastGroundTime < 0.5 then
+								-- Reactivate boost
 							end
 							up = isPressed and 1 or 0
 						end))
@@ -8895,6 +8912,20 @@ run(function()
 					
 					local root = entitylib.character.RootPart
 					if not isnetworkowner(root) then return end
+					
+					-- Check ground state for instant reactivation
+					local humanoid = entitylib.character.Humanoid
+					local onGround = humanoid.FloorMaterial ~= Enum.Material.Air
+					
+					if onGround and not wasOnGround then
+						-- Just landed - record time for instant reactivation window
+						lastGroundTime = tick()
+						wasOnGround = true
+						-- Reset TP state so we can fly again immediately
+						resetTPState()
+					elseif not onGround and wasOnGround then
+						wasOnGround = false
+					end
 					
 					-- Check if we should TP down (from original Fly)
 					local flightAllowed = isFlightAllowed()
@@ -8931,6 +8962,9 @@ run(function()
 									)
 									-- Reset fake balloons
 									fakeBalloonCount = 0
+									-- Mark as on ground for instant reactivation
+									lastGroundTime = tick()
+									wasOnGround = true
 								end
 							end
 						else
@@ -8938,10 +8972,8 @@ run(function()
 								-- Teleport back up
 								local newPos = Vector3.new(root.Position.X, oldY, root.Position.Z)
 								root.CFrame = CFrame.lookAlong(newPos, root.CFrame.LookVector)
-								tpToggle = true
-								oldY = nil
-								flying = false -- Stop flying after TP
-								notif('Jetpack', 'Auto-landed', 2, 'info')
+								-- Reset state but KEEP flying enabled for instant reactivation
+								resetTPState()
 							else
 								mass = 0 -- Stay on ground during TP cooldown
 							end
@@ -8986,7 +9018,7 @@ run(function()
 		ExtraText = function()
 			return 'Heatseeker'
 		end,
-		Tooltip = 'Vertical flight with bypass. Uses fake balloon state and TP Down from Fly.'
+		Tooltip = 'Vertical flight with bypass and instant reactivation. Uses fake balloon state and TP Down from Fly.'
 	})
 	
 	Speed = Jetpack:CreateSlider({
@@ -9037,19 +9069,24 @@ run(function()
 		Default = 'Space',
 		Tooltip = 'Key to activate jetpack (default Space)'
 	})
+	
+	InstantReactivate = Jetpack:CreateToggle({
+		Name = 'Instant Reactivate',
+		Default = true,
+		Tooltip = 'Allows instant boost reactivation after landing from TP Down'
+	})
 end)
 run(function()
 	local Freecam
 	local Speed
 	local Smoothness
 	local ReturnOnDeath
-	local ReturnOnMove
 	local ShowCharacter
 	local ESPMode
 	
 	-- State variables
 	local cameraPart = nil
-	local originalCamera = nil
+	local originalCFrame = nil
 	local originalSubject = nil
 	local freecamActive = false
 	local targetPosition = nil
@@ -9062,6 +9099,7 @@ run(function()
 		space = false,
 		shift = false
 	}
+	local connections = {}
 	
 	-- ESP storage
 	local freecamESP = {}
@@ -9083,7 +9121,7 @@ run(function()
 				box.AlwaysOnTop = true
 				box.ZIndex = 10
 				box.Transparency = 0.5
-				box.Color3 = ent.Targetable and Color3.new(1, 0, 0) or Color3.new(0, 1, 0)
+				box.Color3 = ent.Targetable and Color3.new(1, 0.2, 0.2) or Color3.new(0.2, 1, 0.2)
 				box.Adornee = ent.Character and ent.Character:FindFirstChild('HumanoidRootPart')
 				box.Parent = espFolder
 				freecamESP[ent] = box
@@ -9162,25 +9200,25 @@ run(function()
 					return
 				end
 				
-				-- Store original camera state
-				originalCamera = gameCamera.CFrame
+				-- Store original state
+				originalCFrame = gameCamera.CFrame
 				originalSubject = gameCamera.CameraSubject
 				freecamActive = true
 				
-				-- Create camera part
+				-- Create camera part (invisible, non-collidable)
 				cameraPart = Instance.new('Part')
 				cameraPart.Name = 'FreecamPart'
 				cameraPart.Size = Vector3.one
 				cameraPart.Transparency = 1
 				cameraPart.CanCollide = false
 				cameraPart.Anchored = true
-				cameraPart.Position = originalCamera.Position
+				cameraPart.Position = originalCFrame.Position
 				cameraPart.Parent = workspace
 				
-				-- Set camera subject
-				gameCamera.CameraSubject = cameraPart
+				-- CRITICAL: Don't set CameraSubject - manually control CFrame instead
+				-- This prevents character from being controlled
 				targetPosition = cameraPart.Position
-				targetRotation = originalCamera.Rotation
+				targetRotation = Vector3.new(originalCFrame.Rotation.X, originalCFrame.Rotation.Y, 0)
 				
 				-- Handle character visibility
 				if not ShowCharacter.Enabled and lplr.Character then
@@ -9194,24 +9232,29 @@ run(function()
 					end
 				end
 				
-				-- Input handling
-				Freecam:Clean(inputService.InputBegan:Connect(function(input, gameProcessed)
-					if gameProcessed then return end
-					
-					if input.KeyCode == Enum.KeyCode.W then inputState.w = true
-					elseif input.KeyCode == Enum.KeyCode.A then inputState.a = true
-					elseif input.KeyCode == Enum.KeyCode.S then inputState.s = true
-					elseif input.KeyCode == Enum.KeyCode.D then inputState.d = true
-					elseif input.KeyCode == Enum.KeyCode.Space then inputState.space = true
-					elseif input.KeyCode == Enum.KeyCode.LeftShift then inputState.shift = true
-					elseif input.KeyCode == Enum.KeyCode.E then
+				-- Input handling - NO GAMEPROCESSED CHECK for freecam keys
+				table.insert(connections, inputService.InputBegan:Connect(function(input, gameProcessed)
+					-- Always capture movement keys even if game says processed
+					if input.KeyCode == Enum.KeyCode.W then 
+						inputState.w = true
+					elseif input.KeyCode == Enum.KeyCode.A then 
+						inputState.a = true
+					elseif input.KeyCode == Enum.KeyCode.S then 
+						inputState.s = true
+					elseif input.KeyCode == Enum.KeyCode.D then 
+						inputState.d = true
+					elseif input.KeyCode == Enum.KeyCode.Space then 
+						inputState.space = true
+					elseif input.KeyCode == Enum.KeyCode.LeftShift then 
+						inputState.shift = true
+					elseif input.KeyCode == Enum.KeyCode.E and not gameProcessed then
 						-- Quick return to character
 						Freecam:Toggle()
 						return
 					end
 				end))
 				
-				Freecam:Clean(inputService.InputEnded:Connect(function(input)
+				table.insert(connections, inputService.InputEnded:Connect(function(input)
 					if input.KeyCode == Enum.KeyCode.W then inputState.w = false
 					elseif input.KeyCode == Enum.KeyCode.A then inputState.a = false
 					elseif input.KeyCode == Enum.KeyCode.S then inputState.s = false
@@ -9221,21 +9264,21 @@ run(function()
 					end
 				end))
 				
-				-- Mouse look
-				Freecam:Clean(inputService.InputChanged:Connect(function(input)
+				-- Mouse look - capture all mouse movement
+				table.insert(connections, inputService.InputChanged:Connect(function(input)
 					if input.UserInputType == Enum.UserInputType.MouseMovement and freecamActive then
 						local delta = input.Delta
-						targetRotation = targetRotation + Vector3.new(-delta.Y * 0.15, -delta.X * 0.15, 0)
+						targetRotation = targetRotation + Vector3.new(-delta.Y * 0.2, -delta.X * 0.2, 0)
 						targetRotation = Vector3.new(
-							math.clamp(targetRotation.X, -80, 80),
+							math.clamp(targetRotation.X, -85, 85),
 							targetRotation.Y % 360,
 							0
 						)
 					end
 				end))
 				
-				-- Main loop
-				Freecam:Clean(runService.RenderStepped:Connect(function(dt)
+				-- Main render loop - OVERRIDE CAMERA COMPLETELY
+				table.insert(connections, runService.RenderStepped:Connect(function(dt)
 					if not freecamActive then return end
 					
 					-- Check return conditions
@@ -9244,33 +9287,43 @@ run(function()
 						return
 					end
 					
-					if ReturnOnMove.Enabled then
-						local humanoid = lplr.Character and lplr.Character:FindFirstChild('Humanoid')
-						if humanoid and humanoid.MoveDirection.Magnitude > 0.1 then
-							Freecam:Toggle()
-							return
-						end
-					end
-					
-					-- Calculate movement
+					-- Calculate movement based on camera rotation
 					local moveVec = getMovementVector()
 					local speed = Speed.Value
 					if inputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-						speed = speed * 3 -- Sprint
+						speed = speed * 2.5
 					end
 					
-					-- Apply rotation to movement
-					local camCF = CFrame.Angles(0, math.rad(targetRotation.Y), 0) * 
-								  CFrame.Angles(math.rad(targetRotation.X), 0, 0)
-					local worldMove = (camCF * CFrame.new(moveVec * speed * dt)).Position - camCF.Position
+					-- Build rotation CFrame (yaw then pitch)
+					local yawCF = CFrame.Angles(0, math.rad(targetRotation.Y), 0)
+					local pitchCF = CFrame.Angles(math.rad(targetRotation.X), 0, 0)
+					local camRotation = yawCF * pitchCF
 					
+					-- Transform local movement to world space
+					local worldMove = camRotation * (moveVec * speed * dt * 60)
 					targetPosition = targetPosition + worldMove
 					
-					-- Smooth camera
-					local smooth = math.clamp(Smoothness.Value / 100, 0.01, 1)
-					cameraPart.Position = cameraPart.Position:Lerp(targetPosition, smooth)
-					gameCamera.CFrame = CFrame.new(cameraPart.Position) * 
-										CFrame.Angles(math.rad(targetRotation.X), math.rad(targetRotation.Y), 0)
+					-- Apply smoothing
+					local smooth = math.clamp(Smoothness.Value / 100, 0.001, 1)
+					local currentPos = cameraPart.Position
+					local newPos = currentPos:Lerp(targetPosition, smooth)
+					
+					-- DIRECT CAMERA OVERRIDE - no CameraSubject manipulation
+					cameraPart.Position = newPos
+					
+					-- Force camera CFrame every frame
+					local finalCF = CFrame.new(newPos) * yawCF * pitchCF
+					gameCamera.CFrame = finalCF
+					
+					-- Lock character in place (optional safety)
+					if lplr.Character and entitylib.isAlive then
+						local humanoid = lplr.Character:FindFirstChild('Humanoid')
+						if humanoid then
+							-- Force humanoid to not move from input
+							humanoid.WalkSpeed = 0
+							humanoid.JumpPower = 0
+						end
+					end
 					
 					-- Update ESP
 					updateESP()
@@ -9279,22 +9332,27 @@ run(function()
 				-- Create ESP
 				createESP()
 				
-				notif('Freecam', 'Press E to return to character', 5, 'info')
+				notif('Freecam', 'E to return | Ctrl to sprint | Mouse to look', 5, 'info')
 				
 			else
 				-- Cleanup
 				freecamActive = false
 				
-				-- Restore camera
-				if originalSubject then
-					gameCamera.CameraSubject = originalSubject
+				-- Disconnect all connections first
+				for _, conn in connections do
+					conn:Disconnect()
 				end
-				if originalCamera then
-					gameCamera.CFrame = originalCamera
-				end
+				table.clear(connections)
 				
-				-- Restore character visibility
+				-- Restore character movement
 				if lplr.Character then
+					local humanoid = lplr.Character:FindFirstChild('Humanoid')
+					if humanoid then
+						humanoid.WalkSpeed = 16 -- Default
+						humanoid.JumpPower = 50 -- Default
+					end
+					
+					-- Restore visibility
 					for _, part in lplr.Character:GetDescendants() do
 						if part:IsA('BasePart') then
 							part.Transparency = 0
@@ -9305,6 +9363,11 @@ run(function()
 					end
 				end
 				
+				-- Restore camera
+				if originalSubject then
+					gameCamera.CameraSubject = originalSubject
+				end
+				
 				-- Cleanup objects
 				if cameraPart then
 					cameraPart:Destroy()
@@ -9312,7 +9375,7 @@ run(function()
 				end
 				
 				clearESP()
-				originalCamera = nil
+				originalCFrame = nil
 				originalSubject = nil
 				targetPosition = nil
 				targetRotation = nil
@@ -9323,14 +9386,14 @@ run(function()
 				end
 			end
 		end,
-		Tooltip = 'Detach camera to scout around. WASD to move, Mouse to look, Space/Shift for vertical, E to return, Ctrl to sprint.'
+		Tooltip = 'Detach camera to scout. Character stays completely frozen. WASD to move, Mouse to look, Space/Shift for vertical, E to return, Ctrl to sprint.'
 	})
 	
 	Speed = Freecam:CreateSlider({
 		Name = 'Speed',
 		Min = 1,
-		Max = 100,
-		Default = 30,
+		Max = 200,
+		Default = 50,
 		Suffix = function(val)
 			return val == 1 and 'stud' or 'studs'
 		end
@@ -9340,32 +9403,25 @@ run(function()
 		Name = 'Smoothness',
 		Min = 1,
 		Max = 100,
-		Default = 85,
+		Default = 90,
 		Suffix = '%',
-		Tooltip = 'Higher = smoother but more laggy camera movement'
+		Tooltip = 'Higher = smoother camera'
 	})
 	
 	ReturnOnDeath = Freecam:CreateToggle({
 		Name = 'Return on Death',
-		Default = true,
-		Tooltip = 'Automatically exit freecam when you die'
-	})
-	
-	ReturnOnMove = Freecam:CreateToggle({
-		Name = 'Return on Move',
-		Default = false,
-		Tooltip = 'Exit freecam if your character moves (anti-AFK detection)'
+		Default = true
 	})
 	
 	ShowCharacter = Freecam:CreateToggle({
 		Name = 'Show Character',
 		Default = false,
-		Tooltip = 'Keep your character visible while in freecam'
+		Tooltip = 'Keep character visible (you will still be frozen)'
 	})
 	
 	ESPMode = Freecam:CreateToggle({
 		Name = 'Player ESP',
 		Default = true,
-		Tooltip = 'Show boxes around players while in freecam'
+		Tooltip = 'Show boxes around players'
 	})
 end)
