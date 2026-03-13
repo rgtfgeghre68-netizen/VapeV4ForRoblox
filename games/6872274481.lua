@@ -8715,212 +8715,158 @@ run(function()
 		NameToId[v.name] = i
 	end
 end)  -- THIS END WAS MISSING!
-
--- Infinite Jump (TP Down-Up Method) - Blatant Module - FIXED
 run(function()
 	local InfiniteJump
-	local EnabledNotification
-	local TPDistance
-	local TPReturnHeight
-	local TPSpeed
-	local VisualFeedback
-	local AutoEnable
-	local JumpBoost
-	
-	local isJumping = false
-	local canJump = true
-	
+	local Mode
+	local Delay
+	local Height
+	local rayCheck = RaycastParams.new()
+	rayCheck.RespectCanCollide = true
+	local tpTick, tpToggle, oldy = tick(), true, nil
+
 	InfiniteJump = vape.Categories.Blatant:CreateModule({
 		Name = 'InfiniteJump',
 		Function = function(callback)
 			if callback then
-				if EnabledNotification.Enabled then
-					notif('InfiniteJump', 'Reaper Config | Made by ItssAbdul | Infinite Jump Active', 5, 'success')
-				end
-				
-				local function performJump()
-					if not canJump or not entitylib.isAlive then return end
-					if isJumping then return end
-					
-					canJump = false
-					isJumping = true
-					
-					local root = entitylib.character.RootPart
-					local humanoid = entitylib.character.Humanoid
-					local startPos = root.Position
-					
-					-- Check if on ground or already jumping
-					if humanoid.FloorMaterial == Enum.Material.Air and root.Velocity.Y > 0 then
-						isJumping = false
-						canJump = true
-						return
-					end
-					
-					-- Visual feedback - start
-					if VisualFeedback.Enabled then
-						local effect = Instance.new('Part')
-						effect.Size = Vector3.new(1.5, 0.1, 1.5)
-						effect.Anchored = true
-						effect.CanCollide = false
-						effect.Transparency = 0.4
-						effect.Color = Color3.fromRGB(0, 255, 255)
-						effect.Material = Enum.Material.Neon
-						effect.CFrame = CFrame.new(startPos - Vector3.new(0, 3, 0))
-						effect.Parent = workspace
-						game:GetService('Debris'):AddItem(effect, 0.15)
-					end
-					
-					-- INSTANT TP DOWN (no wait)
-					local downPos = startPos - Vector3.new(0, TPDistance.Value, 0)
-					root.CFrame = CFrame.new(downPos)
-					
-					-- Tiny delay for server to register
-					task.wait(TPSpeed.Value)
-					
-					-- INSTANT TP UP
-					if entitylib.isAlive and InfiniteJump.Enabled then
-						local returnPos = startPos + Vector3.new(0, TPReturnHeight.Value, 0)
-						root.CFrame = CFrame.new(returnPos)
+				InfiniteJump:Clean(runService.PreSimulation:Connect(function(dt)
+					if entitylib.isAlive and isnetworkowner(entitylib.character.RootPart) then
+						local root = entitylib.character.RootPart
+						local humanoid = entitylib.character.Humanoid
 						
-						-- Velocity boost for jump feel
-						if JumpBoost.Enabled then
-							root.Velocity = Vector3.new(root.Velocity.X * 0.5, 40, root.Velocity.Z * 0.5)
-						end
-						
-						-- Visual feedback - return
-						if VisualFeedback.Enabled then
-							local effect = Instance.new('Part')
-							effect.Size = Vector3.new(1, 1, 1)
-							effect.Anchored = true
-							effect.CanCollide = false
-							effect.Transparency = 0.3
-							effect.Color = Color3.fromRGB(0, 255, 100)
-							effect.Material = Enum.Material.Neon
-							effect.Shape = Enum.PartType.Ball
-							effect.Position = returnPos
-							effect.Parent = workspace
-							game:GetService('Debris'):AddItem(effect, 0.1)
-						end
-					end
-					
-					-- Cooldown before next jump
-					task.wait(0.15)
-					isJumping = false
-					canJump = true
-				end
-				
-				-- Clean jump detection - only triggers on actual jump input
-				local function onJumpRequest()
-					if not InfiniteJump.Enabled then return end
-					performJump()
-				end
-				
-				-- Bind to jump request
-				InfiniteJump:Clean(inputService.InputBegan:Connect(function(input, gameProcessed)
-					if gameProcessed then return end
-					if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA then
-						onJumpRequest()
-					end
-				end))
-				
-				-- Alternative: Bind to humanoid jump request
-				if entitylib.isAlive then
-					InfiniteJump:Clean(entitylib.character.Humanoid.Jumping:Connect(function()
-						if not InfiniteJump.Enabled then return end
-						onJumpRequest()
-					end))
-				end
-				
-				-- Mobile support - cleaner detection
-				if inputService.TouchEnabled then
-					pcall(function()
-						local touchGui = lplr.PlayerGui:FindFirstChild('TouchGui')
-						if touchGui then
-							local touchControl = touchGui:FindFirstChild('TouchControlFrame')
-							if touchControl then
-								local jumpButton = touchControl:FindFirstChild('JumpButton')
-								if jumpButton then
-									InfiniteJump:Clean(jumpButton.Activated:Connect(function()
-										if not InfiniteJump.Enabled then return end
-										onJumpRequest()
-									end))
+						-- Check if space is pressed and we're in air
+						if inputService:IsKeyDown(Enum.KeyCode.Space) or inputService:IsKeyDown(Enum.KeyCode.ButtonA) then
+							if humanoid.FloorMaterial == Enum.Material.Air and tpToggle then
+								-- We've been in air, check if we should TP down
+								local airleft = (tick() - entitylib.character.AirTime)
+								
+								if airleft > Delay.Value then
+									if not oldy then
+										rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+										rayCheck.CollisionGroup = root.CollisionGroup
+										
+										local ray = workspace:Raycast(root.Position, Vector3.new(0, -1000, 0), rayCheck)
+										if ray then
+											tpToggle = false
+											oldy = root.Position.Y
+											tpTick = tick() + 0.11
+											
+											-- TP to ground
+											root.CFrame = CFrame.lookAlong(
+												Vector3.new(root.Position.X, ray.Position.Y + entitylib.character.HipHeight, root.Position.Z),
+												root.CFrame.LookVector
+											)
+											
+											-- Reset velocity for clean jump
+											root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
+										end
+									end
+								end
+							else
+								-- We're on ground or not pressing space
+								tpToggle = true
+								oldy = nil
+							end
+							
+							-- Handle the jump back up after TP down
+							if oldy then
+								if tpTick < tick() then
+									-- Time to jump back up
+									if Mode.Value == 'Normal' then
+										-- Teleport back up and jump
+										local newpos = Vector3.new(root.Position.X, oldy + Height.Value, root.Position.Z)
+										root.CFrame = CFrame.lookAlong(newpos, root.CFrame.LookVector)
+										root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 50, root.AssemblyLinearVelocity.Z)
+									elseif Mode.Value == 'Velocity' then
+										-- Just apply upward velocity
+										root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, Height.Value * 2, root.AssemblyLinearVelocity.Z)
+									elseif Mode.Value == 'CFrame' then
+										-- Instant CFrame teleport up
+										local newpos = Vector3.new(root.Position.X, oldy + Height.Value, root.Position.Z)
+										root.CFrame = CFrame.lookAlong(newpos, root.CFrame.LookVector)
+									end
+									
+									tpToggle = true
+									oldy = nil
+								else
+									-- Still waiting, freeze Y position
+									root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
 								end
 							end
 						end
+					end
+				end))
+				
+				-- Mobile support
+				if inputService.TouchEnabled then
+					pcall(function()
+						local jumpButton = lplr.PlayerGui.TouchGui.TouchControlFrame.JumpButton
+						InfiniteJump:Clean(jumpButton:GetPropertyChangedSignal('ImageRectOffset'):Connect(function()
+							-- Mobile jump button pressed
+							if jumpButton.ImageRectOffset.X == 146 and entitylib.isAlive then
+								local root = entitylib.character.RootPart
+								local humanoid = entitylib.character.Humanoid
+								
+								if humanoid.FloorMaterial == Enum.Material.Air and tpToggle then
+									local airleft = (tick() - entitylib.character.AirTime)
+									
+									if airleft > Delay.Value then
+										rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera}
+										rayCheck.CollisionGroup = root.CollisionGroup
+										
+										local ray = workspace:Raycast(root.Position, Vector3.new(0, -1000, 0), rayCheck)
+										if ray then
+											tpToggle = false
+											oldy = root.Position.Y
+											tpTick = tick() + 0.11
+											
+											root.CFrame = CFrame.lookAlong(
+												Vector3.new(root.Position.X, ray.Position.Y + entitylib.character.HipHeight, root.Position.Z),
+												root.CFrame.LookVector
+											)
+											root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
+										end
+									end
+								end
+							end
+						end))
 					end)
 				end
-				
-				-- Auto-enable on spawn
-				if AutoEnable.Enabled then
-					InfiniteJump:Clean(entitylib.Events.LocalAdded:Connect(function()
-						task.wait(0.3)
-						if EnabledNotification.Enabled then
-							notif('InfiniteJump', 'Reaper Config | Made by ItssAbdul | Auto-enabled', 3, 'info')
-						end
-					end))
-				end
-				
 			else
-				isJumping = false
-				canJump = true
+				tpToggle = true
+				oldy = nil
 			end
 		end,
-		Tooltip = 'Reaper Config | Made by ItssAbdul | Smooth infinite jump with TP method'
+		ExtraText = function()
+			return 'Heatseeker'
+		end,
+		Tooltip = 'Allows you to jump infinitely by teleporting down then back up.'
 	})
 	
-	EnabledNotification = InfiniteJump:CreateToggle({
-		Name = 'Enable Notification',
-		Default = true,
-		Tooltip = 'Shows Reaper Config credits on enable'
+	Mode = InfiniteJump:CreateDropdown({
+		Name = 'Mode',
+		List = {'Normal', 'Velocity', 'CFrame'},
+		Tooltip = 'Normal - Teleports down then up with jump velocity\nVelocity - Applies upward velocity only\nCFrame - Instant teleport up'
 	})
 	
-	TPDistance = InfiniteJump:CreateSlider({
-		Name = 'TP Down Distance',
-		Min = 10,
-		Max = 60,
-		Default = 25,
-		Suffix = function(val)
-			return val == 1 and 'stud' or 'studs'
-		end
+	Delay = InfiniteJump:CreateSlider({
+		Name = 'Air Time Delay',
+		Min = 0,
+		Max = 2,
+		Default = 0.1,
+		Decimal = 100,
+		Suffix = 'seconds',
+		Tooltip = 'How long to wait in air before triggering the jump reset'
 	})
 	
-	TPReturnHeight = InfiniteJump:CreateSlider({
-		Name = 'Return Height',
-		Min = 2,
-		Max = 10,
-		Default = 4,
+	Height = InfiniteJump:CreateSlider({
+		Name = 'Jump Height',
+		Min = 5,
+		Max = 50,
+		Default = 20,
 		Suffix = function(val)
 			return val == 1 and 'stud' or 'studs'
 		end,
-		Tooltip = 'How high above original position to return'
-	})
-	
-	TPSpeed = InfiniteJump:CreateSlider({
-		Name = 'TP Delay',
-		Min = 0.01,
-		Max = 0.1,
-		Default = 0.03,
-		Decimal = 100,
-		Suffix = 's',
-		Tooltip = 'Delay between down and up TP (lower = faster)'
-	})
-	
-	VisualFeedback = InfiniteJump:CreateToggle({
-		Name = 'Visual Feedback',
-		Default = true,
-		Tooltip = 'Shows cyan/green effects'
-	})
-	
-	JumpBoost = InfiniteJump:CreateToggle({
-		Name = 'Jump Boost',
-		Default = true,
-		Tooltip = 'Adds upward velocity for better jump feel'
-	})
-	
-	AutoEnable = InfiniteJump:CreateToggle({
-		Name = 'Auto Enable',
-		Default = true,
-		Tooltip = 'Auto-enable on respawn'
+		Tooltip = 'How high to jump after teleporting down'
 	})
 end)
 
@@ -8929,5 +8875,23 @@ task.spawn(function()
 	task.wait(2) -- Wait for vape to fully load
 	notif('ReaperWare', 'reaperware made by noaura', 10, 'success')
 	task.wait(0.5)
-	notif('ReaperWare', 'join our discord for update leaks https://discord.gg/w9WydgRR8j', 10, 'info')
+	
+	-- Store the Discord link
+	local discordLink = 'https://discord.gg/w9WydgRR8j'
+	
+	-- Try to copy to clipboard using setclipboard (exploit function)
+	local success, err = pcall(function()
+		if setclipboard then
+			setclipboard(discordLink)
+			return true
+		end
+		return false
+	end)
+	
+	if success then
+		notif('ReaperWare', 'Discord copied to clipboard: ' .. discordLink, 10, 'info')
+	else
+		-- Fallback: just show the notification without copy
+		notif('ReaperWare', 'join our discord for update leaks ' .. discordLink, 10, 'info')
+	end
 end)
