@@ -8911,3 +8911,629 @@ task.spawn(function()
 		notif('ReaperWare', 'join our discord for update leaks ' .. discordLink, 10, 'info')
 	end
 end)
+run(function()
+	local Jetpack
+	local Speed
+	local VerticalSpeed
+	local TPDown
+	local WallCheck
+	local AutoBalloons
+	local Visualizer
+	local Keybind
+	
+	-- State variables
+	local flying = false
+	local up = 0
+	local down = 0
+	local tpToggle = true
+	local tpTick = 0
+	local oldY = nil
+	local visualizerPart = nil
+	local rayCheck = RaycastParams.new()
+	rayCheck.RespectCanCollide = true
+	
+	-- Fake state to mimic legitimate flight sources
+	local fakeBalloonCount = 0
+	local lastBalloonInflate = 0
+	
+	local function updateVisualizer(state)
+		if not Visualizer.Enabled then
+			if visualizerPart then
+				visualizerPart:Destroy()
+				visualizerPart = nil
+			end
+			return
+		end
+		
+		if state and entitylib.isAlive then
+			if not visualizerPart or not visualizerPart.Parent then
+				visualizerPart = Instance.new('Part')
+				visualizerPart.Name = 'JetpackVisualizer'
+				visualizerPart.Size = Vector3.new(2, 3, 1.5)
+				visualizerPart.Transparency = 0.7
+				visualizerPart.Color = Color3.fromRGB(255, 100, 50)
+				visualizerPart.Material = Enum.Material.Neon
+				visualizerPart.CanCollide = false
+				visualizerPart.Anchored = true
+				visualizerPart.Parent = workspace
+			end
+			
+			local root = entitylib.character.RootPart
+			visualizerPart.CFrame = CFrame.new(root.Position - Vector3.new(0, 2, 0)) * CFrame.Angles(0, tick() * 2, 0)
+		else
+			if visualizerPart then
+				visualizerPart:Destroy()
+				visualizerPart = nil
+			end
+		end
+	end
+	
+	local function getFakeMass()
+		-- Mimic balloon mass calculation to blend in
+		local baseMass = 1.5
+		local balloonMass = (fakeBalloonCount > 0) and (6 * (tick() % 0.4 < 0.2 and -1 or 1)) or 0
+		local inputMass = (up + down) * VerticalSpeed.Value * 0.1
+		return baseMass + balloonMass + inputMass
+	end
+	
+	local function isFlightAllowed()
+		-- Check if we should appear "legitimate"
+		if store.matchState == 2 then return true end -- Always allowed in endgame
+		if fakeBalloonCount > 0 then return true end -- Has "balloons"
+		if AutoBalloons.Enabled and getItem('balloon') then
+			-- Fake balloon inflation for bypass
+			if tick() - lastBalloonInflate > 0.5 then
+				fakeBalloonCount = math.min(3, fakeBalloonCount + 1)
+				lastBalloonInflate = tick()
+			end
+			return true
+		end
+		return false
+	end
+	
+	Jetpack = vape.Categories.Blatant:CreateModule({
+		Name = 'Jetpack',
+		Function = function(callback)
+			frictionTable.Jetpack = callback or nil
+			updateVelocity()
+			
+			if callback then
+				flying = false
+				up = 0
+				down = 0
+				tpToggle = true
+				tpTick = 0
+				oldY = nil
+				fakeBalloonCount = 0
+				
+				-- Keybind handling
+				Jetpack:Clean(inputService.InputBegan:Connect(function(input, gameProcessed)
+					if gameProcessed then return end
+					
+					if input.KeyCode == (Keybind.Value ~= '' and Enum.KeyCode[Keybind.Value] or Enum.KeyCode.Space) or 
+					   input.KeyCode == Enum.KeyCode.ButtonA then
+						if not flying and entitylib.isAlive then
+							flying = true
+							notif('Jetpack', 'Activated', 2, 'info')
+						end
+						up = 1
+					elseif input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.ButtonL2 then
+						down = -1
+					end
+				end))
+				
+				Jetpack:Clean(inputService.InputEnded:Connect(function(input)
+					if input.KeyCode == (Keybind.Value ~= '' and Enum.KeyCode[Keybind.Value] or Enum.KeyCode.Space) or 
+					   input.KeyCode == Enum.KeyCode.ButtonA then
+						up = 0
+						if flying and not (inputService:IsKeyDown(Enum.KeyCode.LeftShift) or inputService:IsKeyDown(Enum.KeyCode.ButtonL2)) then
+							-- Don't immediately stop flying, let momentum carry
+						end
+					elseif input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.ButtonL2 then
+						down = 0
+					end
+				end))
+				
+				-- Mobile support
+				if inputService.TouchEnabled then
+					pcall(function()
+						local jumpButton = lplr.PlayerGui.TouchGui.TouchControlFrame.JumpButton
+						Jetpack:Clean(jumpButton:GetPropertyChangedSignal('ImageRectOffset'):Connect(function()
+							local isPressed = jumpButton.ImageRectOffset.X == 146
+							if isPressed and not flying and entitylib.isAlive then
+								flying = true
+							end
+							up = isPressed and 1 or 0
+						end))
+					end)
+				end
+				
+				-- Main flight loop
+				Jetpack:Clean(runService.PreSimulation:Connect(function(dt)
+					if not entitylib.isAlive then
+						flying = false
+						updateVisualizer(false)
+						return
+					end
+					
+					if not flying then
+						updateVisualizer(false)
+						return
+					end
+					
+					local root = entitylib.character.RootPart
+					if not isnetworkowner(root) then return end
+					
+					-- Check if we should TP down (from original Fly)
+					local flightAllowed = isFlightAllowed()
+					local mass = getFakeMass()
+					local moveDirection = entitylib.character.Humanoid.MoveDirection
+					local velo = getSpeed()
+					local destination = (moveDirection * math.max(Speed.Value - velo, 0) * dt)
+					
+					rayCheck.FilterDescendantsInstances = {lplr.Character, gameCamera, AntiFallPart}
+					rayCheck.CollisionGroup = root.CollisionGroup
+					
+					-- Wall check
+					if WallCheck.Enabled then
+						local ray = workspace:Raycast(root.Position, destination, rayCheck)
+						if ray then
+							destination = ((ray.Position + ray.Normal) - root.Position)
+						end
+					end
+					
+					-- TP Down feature from original Fly
+					if TPDown.Enabled and not flightAllowed then
+						if tpToggle then
+							local airTime = tick() - (entitylib.character.AirTime or tick())
+							if airTime > 2 and not oldY then
+								local ray = workspace:Raycast(root.Position, Vector3.new(0, -1000, 0), rayCheck)
+								if ray then
+									tpToggle = false
+									oldY = root.Position.Y
+									tpTick = tick() + 0.11
+									-- Teleport to ground
+									root.CFrame = CFrame.lookAlong(
+										Vector3.new(root.Position.X, ray.Position.Y + entitylib.character.HipHeight, root.Position.Z),
+										root.CFrame.LookVector
+									)
+									-- Reset fake balloons
+									fakeBalloonCount = 0
+								end
+							end
+						else
+							if oldY and tpTick < tick() then
+								-- Teleport back up
+								local newPos = Vector3.new(root.Position.X, oldY, root.Position.Z)
+								root.CFrame = CFrame.lookAlong(newPos, root.CFrame.LookVector)
+								tpToggle = true
+								oldY = nil
+								flying = false -- Stop flying after TP
+								notif('Jetpack', 'Auto-landed', 2, 'info')
+							else
+								mass = 0 -- Stay on ground during TP cooldown
+							end
+						end
+					end
+					
+					-- Apply movement
+					root.CFrame += destination
+					root.AssemblyLinearVelocity = (moveDirection * velo) + Vector3.new(0, mass, 0)
+					
+					updateVisualizer(true)
+				end))
+				
+				-- Auto-inflate balloons if enabled
+				if AutoBalloons.Enabled then
+					Jetpack:Clean(vapeEvents.AttributeChanged.Event:Connect(function(attr)
+						if attr == 'InflatedBalloons' then
+							local realBalloons = lplr.Character:GetAttribute('InflatedBalloons') or 0
+							if realBalloons == 0 and getItem('balloon') then
+								pcall(function()
+									bedwars.BalloonController:inflateBalloon()
+								end)
+							end
+						end
+					end))
+				end
+				
+			else
+				-- Cleanup
+				flying = false
+				updateVisualizer(false)
+				if AutoBalloons.Enabled and entitylib.isAlive then
+					local realBalloons = lplr.Character:GetAttribute('InflatedBalloons') or 0
+					for i = 1, realBalloons do
+						pcall(function()
+							bedwars.BalloonController:deflateBalloon()
+						end)
+					end
+				end
+			end
+		end,
+		ExtraText = function()
+			return 'Heatseeker'
+		end,
+		Tooltip = 'Vertical flight with bypass. Uses fake balloon state and TP Down from Fly.'
+	})
+	
+	Speed = Jetpack:CreateSlider({
+		Name = 'Horizontal Speed',
+		Min = 1,
+		Max = 23,
+		Default = 20,
+		Suffix = function(val)
+			return val == 1 and 'stud' or 'studs'
+		end
+	})
+	
+	VerticalSpeed = Jetpack:CreateSlider({
+		Name = 'Vertical Speed',
+		Min = 1,
+		Max = 100,
+		Default = 50,
+		Suffix = function(val)
+			return val == 1 and 'stud' or 'studs'
+		end
+	})
+	
+	TPDown = Jetpack:CreateToggle({
+		Name = 'TP Down',
+		Default = true,
+		Tooltip = 'Teleports to ground when air time exceeds 2s, then back up. From original Fly.'
+	})
+	
+	WallCheck = Jetpack:CreateToggle({
+		Name = 'Wall Check',
+		Default = true
+	})
+	
+	AutoBalloons = Jetpack:CreateToggle({
+		Name = 'Auto Balloons',
+		Default = true,
+		Tooltip = 'Inflates real balloons to help with bypass'
+	})
+	
+	Visualizer = Jetpack:CreateToggle({
+		Name = 'Visualizer',
+		Default = false,
+		Tooltip = 'Shows jetpack flame effect'
+	})
+	
+	Keybind = Jetpack:CreateTextBox({
+		Name = 'Keybind',
+		Default = 'Space',
+		Tooltip = 'Key to activate jetpack (default Space)'
+	})
+end)
+run(function()
+	local Freecam
+	local Speed
+	local Smoothness
+	local ReturnOnDeath
+	local ReturnOnMove
+	local ShowCharacter
+	local ESPMode
+	
+	-- State variables
+	local cameraPart = nil
+	local originalCamera = nil
+	local originalSubject = nil
+	local freecamActive = false
+	local targetPosition = nil
+	local targetRotation = nil
+	local inputState = {
+		w = false,
+		a = false,
+		s = false,
+		d = false,
+		space = false,
+		shift = false
+	}
+	
+	-- ESP storage
+	local freecamESP = {}
+	local espFolder = nil
+	
+	local function createESP()
+		if not ESPMode.Enabled then return end
+		if espFolder then return end
+		
+		espFolder = Instance.new('Folder')
+		espFolder.Name = 'FreecamESP'
+		espFolder.Parent = vape.gui
+		
+		for _, ent in entitylib.List do
+			if ent.Player and ent.Player ~= lplr then
+				local box = Instance.new('BoxHandleAdornment')
+				box.Name = ent.Player.Name .. '_ESP'
+				box.Size = Vector3.new(3, 5, 3)
+				box.AlwaysOnTop = true
+				box.ZIndex = 10
+				box.Transparency = 0.5
+				box.Color3 = ent.Targetable and Color3.new(1, 0, 0) or Color3.new(0, 1, 0)
+				box.Adornee = ent.Character and ent.Character:FindFirstChild('HumanoidRootPart')
+				box.Parent = espFolder
+				freecamESP[ent] = box
+			end
+		end
+	end
+	
+	local function updateESP()
+		if not ESPMode.Enabled or not espFolder then return end
+		
+		for ent, box in freecamESP do
+			if not ent.Player or ent.Player == lplr or not ent.Character then
+				box:Destroy()
+				freecamESP[ent] = nil
+				continue
+			end
+			
+			local root = ent.Character:FindFirstChild('HumanoidRootPart')
+			box.Adornee = root
+			
+			if root then
+				local distance = (cameraPart.Position - root.Position).Magnitude
+				box.Size = Vector3.new(3, 5, 3) * math.clamp(1 - (distance / 500), 0.5, 1)
+				box.Color3 = ent.Targetable and Color3.new(1, 0.2, 0.2) or Color3.new(0.2, 1, 0.2)
+			end
+		end
+		
+		-- Add new entities
+		for _, ent in entitylib.List do
+			if ent.Player and ent.Player ~= lplr and not freecamESP[ent] then
+				local box = Instance.new('BoxHandleAdornment')
+				box.Name = ent.Player.Name .. '_ESP'
+				box.Size = Vector3.new(3, 5, 3)
+				box.AlwaysOnTop = true
+				box.ZIndex = 10
+				box.Transparency = 0.5
+				box.Color3 = ent.Targetable and Color3.new(1, 0, 0) or Color3.new(0, 1, 0)
+				box.Adornee = ent.Character and ent.Character:FindFirstChild('HumanoidRootPart')
+				box.Parent = espFolder
+				freecamESP[ent] = box
+			end
+		end
+	end
+	
+	local function clearESP()
+		for _, box in freecamESP do
+			box:Destroy()
+		end
+		table.clear(freecamESP)
+		if espFolder then
+			espFolder:Destroy()
+			espFolder = nil
+		end
+	end
+	
+	local function getMovementVector()
+		local vec = Vector3.zero
+		
+		if inputState.w then vec += Vector3.new(0, 0, -1) end
+		if inputState.s then vec += Vector3.new(0, 0, 1) end
+		if inputState.a then vec += Vector3.new(-1, 0, 0) end
+		if inputState.d then vec += Vector3.new(1, 0, 0) end
+		if inputState.space then vec += Vector3.new(0, 1, 0) end
+		if inputState.shift then vec += Vector3.new(0, -1, 0) end
+		
+		return vec.Magnitude > 0 and vec.Unit or vec
+	end
+	
+	Freecam = vape.Categories.Render:CreateModule({
+		Name = 'Freecam',
+		Function = function(callback)
+			if callback then
+				if not entitylib.isAlive then
+					notif('Freecam', 'Cannot activate while dead', 3, 'alert')
+					Freecam:Toggle()
+					return
+				end
+				
+				-- Store original camera state
+				originalCamera = gameCamera.CFrame
+				originalSubject = gameCamera.CameraSubject
+				freecamActive = true
+				
+				-- Create camera part
+				cameraPart = Instance.new('Part')
+				cameraPart.Name = 'FreecamPart'
+				cameraPart.Size = Vector3.one
+				cameraPart.Transparency = 1
+				cameraPart.CanCollide = false
+				cameraPart.Anchored = true
+				cameraPart.Position = originalCamera.Position
+				cameraPart.Parent = workspace
+				
+				-- Set camera subject
+				gameCamera.CameraSubject = cameraPart
+				targetPosition = cameraPart.Position
+				targetRotation = originalCamera.Rotation
+				
+				-- Handle character visibility
+				if not ShowCharacter.Enabled and lplr.Character then
+					for _, part in lplr.Character:GetDescendants() do
+						if part:IsA('BasePart') and part.Name ~= 'HumanoidRootPart' then
+							part.Transparency = 1
+							if part:FindFirstChild('face') then
+								part.face.Transparency = 1
+							end
+						end
+					end
+				end
+				
+				-- Input handling
+				Freecam:Clean(inputService.InputBegan:Connect(function(input, gameProcessed)
+					if gameProcessed then return end
+					
+					if input.KeyCode == Enum.KeyCode.W then inputState.w = true
+					elseif input.KeyCode == Enum.KeyCode.A then inputState.a = true
+					elseif input.KeyCode == Enum.KeyCode.S then inputState.s = true
+					elseif input.KeyCode == Enum.KeyCode.D then inputState.d = true
+					elseif input.KeyCode == Enum.KeyCode.Space then inputState.space = true
+					elseif input.KeyCode == Enum.KeyCode.LeftShift then inputState.shift = true
+					elseif input.KeyCode == Enum.KeyCode.E then
+						-- Quick return to character
+						Freecam:Toggle()
+						return
+					end
+				end))
+				
+				Freecam:Clean(inputService.InputEnded:Connect(function(input)
+					if input.KeyCode == Enum.KeyCode.W then inputState.w = false
+					elseif input.KeyCode == Enum.KeyCode.A then inputState.a = false
+					elseif input.KeyCode == Enum.KeyCode.S then inputState.s = false
+					elseif input.KeyCode == Enum.KeyCode.D then inputState.d = false
+					elseif input.KeyCode == Enum.KeyCode.Space then inputState.space = false
+					elseif input.KeyCode == Enum.KeyCode.LeftShift then inputState.shift = false
+					end
+				end))
+				
+				-- Mouse look
+				Freecam:Clean(inputService.InputChanged:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.MouseMovement and freecamActive then
+						local delta = input.Delta
+						targetRotation = targetRotation + Vector3.new(-delta.Y * 0.15, -delta.X * 0.15, 0)
+						targetRotation = Vector3.new(
+							math.clamp(targetRotation.X, -80, 80),
+							targetRotation.Y % 360,
+							0
+						)
+					end
+				end))
+				
+				-- Main loop
+				Freecam:Clean(runService.RenderStepped:Connect(function(dt)
+					if not freecamActive then return end
+					
+					-- Check return conditions
+					if ReturnOnDeath.Enabled and not entitylib.isAlive then
+						Freecam:Toggle()
+						return
+					end
+					
+					if ReturnOnMove.Enabled then
+						local humanoid = lplr.Character and lplr.Character:FindFirstChild('Humanoid')
+						if humanoid and humanoid.MoveDirection.Magnitude > 0.1 then
+							Freecam:Toggle()
+							return
+						end
+					end
+					
+					-- Calculate movement
+					local moveVec = getMovementVector()
+					local speed = Speed.Value
+					if inputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+						speed = speed * 3 -- Sprint
+					end
+					
+					-- Apply rotation to movement
+					local camCF = CFrame.Angles(0, math.rad(targetRotation.Y), 0) * 
+								  CFrame.Angles(math.rad(targetRotation.X), 0, 0)
+					local worldMove = (camCF * CFrame.new(moveVec * speed * dt)).Position - camCF.Position
+					
+					targetPosition = targetPosition + worldMove
+					
+					-- Smooth camera
+					local smooth = math.clamp(Smoothness.Value / 100, 0.01, 1)
+					cameraPart.Position = cameraPart.Position:Lerp(targetPosition, smooth)
+					gameCamera.CFrame = CFrame.new(cameraPart.Position) * 
+										CFrame.Angles(math.rad(targetRotation.X), math.rad(targetRotation.Y), 0)
+					
+					-- Update ESP
+					updateESP()
+				end))
+				
+				-- Create ESP
+				createESP()
+				
+				notif('Freecam', 'Press E to return to character', 5, 'info')
+				
+			else
+				-- Cleanup
+				freecamActive = false
+				
+				-- Restore camera
+				if originalSubject then
+					gameCamera.CameraSubject = originalSubject
+				end
+				if originalCamera then
+					gameCamera.CFrame = originalCamera
+				end
+				
+				-- Restore character visibility
+				if lplr.Character then
+					for _, part in lplr.Character:GetDescendants() do
+						if part:IsA('BasePart') then
+							part.Transparency = 0
+							if part:FindFirstChild('face') then
+								part.face.Transparency = 0
+							end
+						end
+					end
+				end
+				
+				-- Cleanup objects
+				if cameraPart then
+					cameraPart:Destroy()
+					cameraPart = nil
+				end
+				
+				clearESP()
+				originalCamera = nil
+				originalSubject = nil
+				targetPosition = nil
+				targetRotation = nil
+				
+				-- Reset input state
+				for k in inputState do
+					inputState[k] = false
+				end
+			end
+		end,
+		Tooltip = 'Detach camera to scout around. WASD to move, Mouse to look, Space/Shift for vertical, E to return, Ctrl to sprint.'
+	})
+	
+	Speed = Freecam:CreateSlider({
+		Name = 'Speed',
+		Min = 1,
+		Max = 100,
+		Default = 30,
+		Suffix = function(val)
+			return val == 1 and 'stud' or 'studs'
+		end
+	})
+	
+	Smoothness = Freecam:CreateSlider({
+		Name = 'Smoothness',
+		Min = 1,
+		Max = 100,
+		Default = 85,
+		Suffix = '%',
+		Tooltip = 'Higher = smoother but more laggy camera movement'
+	})
+	
+	ReturnOnDeath = Freecam:CreateToggle({
+		Name = 'Return on Death',
+		Default = true,
+		Tooltip = 'Automatically exit freecam when you die'
+	})
+	
+	ReturnOnMove = Freecam:CreateToggle({
+		Name = 'Return on Move',
+		Default = false,
+		Tooltip = 'Exit freecam if your character moves (anti-AFK detection)'
+	})
+	
+	ShowCharacter = Freecam:CreateToggle({
+		Name = 'Show Character',
+		Default = false,
+		Tooltip = 'Keep your character visible while in freecam'
+	})
+	
+	ESPMode = Freecam:CreateToggle({
+		Name = 'Player ESP',
+		Default = true,
+		Tooltip = 'Show boxes around players while in freecam'
+	})
+end)
