@@ -9613,7 +9613,7 @@ run(function()
         ["Custom"] = ""
     }
 
-    Ambience = vape.Categories.Blatant:CreateModule({
+    Ambience = vape.Categories.Render:CreateModule({
         Name = "Ambience",
         Function = function(callback)
             if callback then
@@ -9661,21 +9661,30 @@ run(function()
     Ambience:CreateDropdown({
         Name = "Preset",
         List = {"Nebula", "Space", "Galaxy", "Sunset", "Night", "Custom"},
-        Default = "Nebula",
         Function = function(val)
-            if val == "Custom" then
-                -- Keep current custom ID
-            else
+            if val ~= "Custom" then
                 AmbienceID.Value = skyboxIDs[val]
+                -- Auto refresh if enabled
+                if Ambience.Enabled then
+                    Ambience:Toggle()
+                    task.wait()
+                    Ambience:Toggle()
+                end
             end
         end
     })
 
     Ambience:CreateTextBox({
         Name = "Custom Skybox ID",
-        Default = "122785120445164",
+        TempText = "Enter Asset ID",
         Function = function(val)
             AmbienceID.Value = val:gsub("rbxassetid://", "")
+            -- Auto refresh if enabled
+            if Ambience.Enabled then
+                Ambience:Toggle()
+                task.wait()
+                Ambience:Toggle()
+            end
         end
     })
 end)
