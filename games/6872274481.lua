@@ -9688,3 +9688,338 @@ run(function()
         end
     })
 end)
+run(function()
+    local Keystrokes
+    local ShowMouseButtons
+    local ShowSpace
+    local ShowShift
+    local Scale
+    local BackgroundTransparency
+    local TextColor
+    local BackgroundColor
+    local BorderRadius
+    
+    -- UI Elements storage
+    local keystrokeFrame = nil
+    local keyButtons = {}
+    local isDragging = false
+    local dragStart = nil
+    local frameStart = nil
+    local savedPosition = nil
+    
+    -- Key state tracking
+    local keyStates = {
+        W = false,
+        A = false,
+        S = false,
+        D = false,
+        Space = false,
+        LeftShift = false,
+        MouseButton1 = false,
+        MouseButton2 = false
+    }
+    
+    local function createKeyButton(name, text, position, size)
+        local button = Instance.new("TextButton")
+        button.Name = name
+        button.Text = text
+        button.Size = size or UDim2.fromOffset(50, 50)
+        button.Position = position
+        button.BackgroundColor3 = Color3.fromHSV(BackgroundColor.Hue, BackgroundColor.Sat, BackgroundColor.Value)
+        button.BackgroundTransparency = 1 - BackgroundTransparency.Value
+        button.TextColor3 = Color3.fromHSV(TextColor.Hue, TextColor.Sat, TextColor.Value)
+        button.TextSize = 16 * Scale.Value
+        button.Font = Enum.Font.GothamBold
+        button.BorderSizePixel = 0
+        button.AutoButtonColor = false
+        button.TextStrokeTransparency = 0.8
+        button.TextStrokeColor3 = Color3.new(0, 0, 0)
+        button.Parent = keystrokeFrame
+        
+        -- Rounded corners
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, BorderRadius.Value)
+        corner.Parent = button
+        
+        -- Stroke
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromHSV(TextColor.Hue, TextColor.Sat, TextColor.Value)
+        stroke.Transparency = 0.7
+        stroke.Thickness = 1.5
+        stroke.Parent = button
+        
+        return button
+    end
+    
+    local function updateKeyVisual(key, isPressed)
+        local button = keyButtons[key]
+        if not button then return end
+        
+        if isPressed then
+            button.BackgroundColor3 = Color3.fromHSV(TextColor.Hue, TextColor.Sat, TextColor.Value)
+            button.TextColor3 = Color3.fromHSV(BackgroundColor.Hue, BackgroundColor.Sat, BackgroundColor.Value)
+            button.Size = UDim2.new(0, 50 * Scale.Value - 4, 0, 50 * Scale.Value - 4)
+            button.Position = UDim2.new(
+                button.Position.X.Scale, 
+                button.Position.X.Offset + 2, 
+                button.Position.Y.Scale, 
+                button.Position.Y.Offset + 2
+            )
+        else
+            button.BackgroundColor3 = Color3.fromHSV(BackgroundColor.Hue, BackgroundColor.Sat, BackgroundColor.Value)
+            button.TextColor3 = Color3.fromHSV(TextColor.Hue, TextColor.Sat, TextColor.Value)
+            button.Size = UDim2.new(0, 50 * Scale.Value, 0, 50 * Scale.Value)
+            button.Position = UDim2.new(
+                button.Position.X.Scale, 
+                button.Position.X.Offset - 2, 
+                button.Position.Y.Scale, 
+                button.Position.Y.Offset - 2
+            )
+        end
+    end
+    
+    local function buildUI()
+        if keystrokeFrame then
+            savedPosition = keystrokeFrame.Position
+            keystrokeFrame:Destroy()
+        end
+        
+        keystrokeFrame = Instance.new("Frame")
+        keystrokeFrame.Name = "Keystrokes"
+        keystrokeFrame.Size = UDim2.fromOffset(170 * Scale.Value, 200 * Scale.Value)
+        keystrokeFrame.Position = savedPosition or UDim2.new(0, 50, 0.7, 0)
+        keystrokeFrame.BackgroundTransparency = 1
+        keystrokeFrame.BorderSizePixel = 0
+        keystrokeFrame.Parent = vape.gui
+        
+        -- Make draggable
+        keystrokeFrame.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                isDragging = true
+                dragStart = Vector2.new(input.Position.X, input.Position.Y)
+                frameStart = Vector2.new(keystrokeFrame.Position.X.Offset, keystrokeFrame.Position.Y.Offset)
+            end
+        end)
+        
+        keystrokeFrame.InputChanged:Connect(function(input)
+            if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStart
+                keystrokeFrame.Position = UDim2.new(0, frameStart.X + delta.X, 0, frameStart.Y + delta.Y)
+            end
+        end)
+        
+        keystrokeFrame.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                isDragging = false
+            end
+        end)
+        
+        keyButtons = {}
+        
+        local baseSize = 50 * Scale.Value
+        local spacing = 5 * Scale.Value
+        
+        -- W (top center)
+        keyButtons.W = createKeyButton("W", "W", UDim2.new(0, baseSize + spacing, 0, 0), UDim2.fromOffset(baseSize, baseSize))
+        
+        -- A (middle left)
+        keyButtons.A = createKeyButton("A", "A", UDim2.new(0, 0, 0, baseSize + spacing), UDim2.fromOffset(baseSize, baseSize))
+        
+        -- S (middle center)
+        keyButtons.S = createKeyButton("S", "S", UDim2.new(0, baseSize + spacing, 0, baseSize + spacing), UDim2.fromOffset(baseSize, baseSize))
+        
+        -- D (middle right)
+        keyButtons.D = createKeyButton("D", "D", UDim2.new(0, (baseSize + spacing) * 2, 0, baseSize + spacing), UDim2.fromOffset(baseSize, baseSize))
+        
+        local yOffset = (baseSize + spacing) * 2
+        
+        -- Space bar
+        if ShowSpace.Enabled then
+            yOffset = yOffset + spacing
+            keyButtons.Space = createKeyButton("Space", "SPACE", UDim2.new(0, 0, 0, yOffset), UDim2.new(0, (baseSize * 3) + (spacing * 2), 0, baseSize * 0.6))
+            yOffset = yOffset + (baseSize * 0.6) + spacing
+        end
+        
+        -- Shift
+        if ShowShift.Enabled then
+            keyButtons.LeftShift = createKeyButton("Shift", "SHIFT", UDim2.new(0, 0, 0, yOffset), UDim2.new(0, (baseSize * 3) + (spacing * 2), 0, baseSize * 0.6))
+            yOffset = yOffset + (baseSize * 0.6) + spacing
+        end
+        
+        -- Mouse buttons
+        if ShowMouseButtons.Enabled then
+            yOffset = yOffset + spacing
+            keyButtons.MouseButton1 = createKeyButton("LMB", "LMB", UDim2.new(0, 0, 0, yOffset), UDim2.new(0, ((baseSize * 1.5) + spacing), 0, baseSize))
+            keyButtons.MouseButton2 = createKeyButton("RMB", "RMB", UDim2.new(0, (baseSize * 1.5) + (spacing * 2), 0, yOffset), UDim2.new(0, ((baseSize * 1.5) + spacing), 0, baseSize))
+        end
+        
+        -- Update frame size based on content
+        local totalHeight = yOffset + (ShowMouseButtons.Enabled and baseSize or 0)
+        keystrokeFrame.Size = UDim2.new(0, (baseSize * 3) + (spacing * 2), 0, totalHeight)
+    end
+    
+    Keystrokes = vape.Categories.Render:CreateModule({
+        Name = 'Keystrokes',
+        Function = function(callback)
+            if callback then
+                buildUI()
+                
+                -- Input detection
+                Keystrokes:Clean(inputService.InputBegan:Connect(function(input, gameProcessed)
+                    local keyName = nil
+                    
+                    if input.KeyCode == Enum.KeyCode.W then keyName = "W"
+                    elseif input.KeyCode == Enum.KeyCode.A then keyName = "A"
+                    elseif input.KeyCode == Enum.KeyCode.S then keyName = "S"
+                    elseif input.KeyCode == Enum.KeyCode.D then keyName = "D"
+                    elseif input.KeyCode == Enum.KeyCode.Space and ShowSpace.Enabled then keyName = "Space"
+                    elseif (input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift) and ShowShift.Enabled then keyName = "LeftShift"
+                    elseif input.UserInputType == Enum.UserInputType.MouseButton1 and ShowMouseButtons.Enabled then keyName = "MouseButton1"
+                    elseif input.UserInputType == Enum.UserInputType.MouseButton2 and ShowMouseButtons.Enabled then keyName = "MouseButton2"
+                    end
+                    
+                    if keyName and not keyStates[keyName] then
+                        keyStates[keyName] = true
+                        updateKeyVisual(keyName, true)
+                    end
+                end))
+                
+                Keystrokes:Clean(inputService.InputEnded:Connect(function(input)
+                    local keyName = nil
+                    
+                    if input.KeyCode == Enum.KeyCode.W then keyName = "W"
+                    elseif input.KeyCode == Enum.KeyCode.A then keyName = "A"
+                    elseif input.KeyCode == Enum.KeyCode.S then keyName = "S"
+                    elseif input.KeyCode == Enum.KeyCode.D then keyName = "D"
+                    elseif input.KeyCode == Enum.KeyCode.Space and ShowSpace.Enabled then keyName = "Space"
+                    elseif (input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift) and ShowShift.Enabled then keyName = "LeftShift"
+                    elseif input.UserInputType == Enum.UserInputType.MouseButton1 and ShowMouseButtons.Enabled then keyName = "MouseButton1"
+                    elseif input.UserInputType == Enum.UserInputType.MouseButton2 and ShowMouseButtons.Enabled then keyName = "MouseButton2"
+                    end
+                    
+                    if keyName and keyStates[keyName] then
+                        keyStates[keyName] = false
+                        updateKeyVisual(keyName, false)
+                    end
+                end))
+                
+            else
+                if keystrokeFrame then
+                    keystrokeFrame:Destroy()
+                    keystrokeFrame = nil
+                end
+                keyButtons = {}
+                for k in keyStates do
+                    keyStates[k] = false
+                end
+            end
+        end,
+        Tooltip = 'Displays pressed keys on screen with visual feedback. Drag to reposition.'
+    })
+    
+    ShowMouseButtons = Keystrokes:CreateToggle({
+        Name = 'Show Mouse Buttons',
+        Default = true,
+        Function = function()
+            if Keystrokes.Enabled then
+                Keystrokes:Toggle()
+                Keystrokes:Toggle()
+            end
+        end
+    })
+    
+    ShowSpace = Keystrokes:CreateToggle({
+        Name = 'Show Space',
+        Default = true,
+        Function = function()
+            if Keystrokes.Enabled then
+                Keystrokes:Toggle()
+                Keystrokes:Toggle()
+            end
+        end
+    })
+    
+    ShowShift = Keystrokes:CreateToggle({
+        Name = 'Show Shift',
+        Default = true,
+        Function = function()
+            if Keystrokes.Enabled then
+                Keystrokes:Toggle()
+                Keystrokes:Toggle()
+            end
+        end
+    })
+    
+    Scale = Keystrokes:CreateSlider({
+        Name = 'Scale',
+        Min = 0.5,
+        Max = 2,
+        Default = 1,
+        Decimal = 10,
+        Function = function()
+            if Keystrokes.Enabled then
+                buildUI()
+            end
+        end
+    })
+    
+    BackgroundTransparency = Keystrokes:CreateSlider({
+        Name = 'Background Opacity',
+        Min = 0,
+        Max = 1,
+        Default = 0.8,
+        Decimal = 10,
+        Function = function(val)
+            if keystrokeFrame then
+                for _, button in keyButtons do
+                    button.BackgroundTransparency = 1 - val
+                end
+            end
+        end
+    })
+    
+    TextColor = Keystrokes:CreateColorSlider({
+        Name = 'Text Color',
+        DefaultHue = 0,
+        DefaultSat = 0,
+        DefaultValue = 1,
+        Function = function(hue, sat, val)
+            if keystrokeFrame then
+                for key, button in keyButtons do
+                    if not keyStates[key] then
+                        button.TextColor3 = Color3.fromHSV(hue, sat, val)
+                        button:FindFirstChildOfClass("UIStroke").Color = Color3.fromHSV(hue, sat, val)
+                    end
+                end
+            end
+        end
+    })
+    
+    BackgroundColor = Keystrokes:CreateColorSlider({
+        Name = 'Background Color',
+        DefaultHue = 0,
+        DefaultSat = 0,
+        DefaultValue = 0.1,
+        Function = function(hue, sat, val)
+            if keystrokeFrame then
+                for key, button in keyButtons do
+                    if not keyStates[key] then
+                        button.BackgroundColor3 = Color3.fromHSV(hue, sat, val)
+                    end
+                end
+            end
+        end
+    })
+    
+    BorderRadius = Keystrokes:CreateSlider({
+        Name = 'Corner Radius',
+        Min = 0,
+        Max = 25,
+        Default = 8,
+        Function = function()
+            if Keystrokes.Enabled then
+                buildUI()
+            end
+        end
+    })
+end)
